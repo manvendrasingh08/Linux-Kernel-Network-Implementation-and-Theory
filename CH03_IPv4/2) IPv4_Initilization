@@ -1,0 +1,74 @@
+1️⃣ IPv4 packets on Ethernet
+---------------------------
+Ethernet frames have a type field (2 bytes) in their 14-byte header.
+This type tells the network stack what kind of payload is inside.
+For IPv4, the Ethernet type = 0x0800.
+This is defined as ETH_P_IP in the Linux headers.
+So whenever an Ethernet frame arrives with type = 0x0800, it contains an IPv4 packet.
+
+2️⃣ Protocol handler in Linux kernel
+-----------------------------------
+The kernel has a network stack that can handle many protocols: IPv4, IPv6, ARP, etc.
+For each protocol, there is a protocol handler function — a callback that is called whenever a packet of that protocol arrives.
+For IPv4:
+
+static struct packet_type ip_packet_type __read_mostly = {
+    .type = cpu_to_be16(ETH_P_IP),  // IPv4 packets
+    .func = ip_rcv,                 // function to handle received IPv4 packets
+};
+
+.type → specifies Ethernet type (0x0800 for IPv4)
+.func → points to the function ip_rcv() that will handle incoming IPv4 packets
+
+3️⃣ Registering the protocol handler
+-----------------------------------
+During system boot, the IPv4 protocol handler must be registered so the network stack knows:
+“Whenever a packet with Ethernet type 0x0800 arrives, call ip_rcv() to process it.”
+
+This is done using:
+
+static int __init inet_init(void)
+{
+    ...
+    dev_add_pack(&ip_packet_type);
+    ...
+}
+
+dev_add_pack() → adds the ip_packet_type to the kernel’s list of protocol handlers.
+inet_init() → initialization function for IPv4; called during boot.
+
+4️⃣ What happens when a packet arrives
+-------------------------------------
+Ethernet card receives a frame.
+The Ethernet driver passes the frame to the network stack.
+Network stack looks at the Ethernet type:
+  If type = 0x0800 → IPv4 → call ip_rcv()
+  If type = something else → call other protocol handler
+So ip_rcv() is the function that actually starts processing IPv4 packets.
+
+5️⃣ IPv4 network stack paths
+----------------------------
+IPv4 protocol has two main paths:
+Rx (Receive) path → how incoming IPv4 packets are handled.
+  Starts with ip_rcv() → goes through IP header processing, routing decisions, etc.
+Tx (Transmit) path → how outgoing IPv4 packets are sent.
+  Handled by functions like ip_output() (covered separately).
+
+6️⃣ Summary / Easy Analogy
+--------------------------
+Ethernet frame → package on the network.
+Type field = 0x0800 → label says “this is IPv4.”
+Kernel registers handler (ip_rcv) → tells network stack: “if you see 0x0800, call me.”
+dev_add_pack() → officially adds this handler to the kernel’s list.
+Result: Whenever an IPv4 packet arrives, the kernel automatically sends it to ip_rcv() to handle it.
+
+✅ Key Points
+-------------
+Ethernet Type 0x0800  → identifies IPv4 packets
+ip_packet_type        → structure linking type to handler
+ip_rcv()              → function called to process IPv4 packets
+dev_add_pack()        → registers the handler in kernel
+inet_init()           → initialization function called at boot
+Rx path               → handles incoming IPv4 packets
+Tx path               → handles outgoing IPv4 packets (later)
+
