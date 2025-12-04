@@ -1,0 +1,114 @@
+IPv4 Header:
+-------------
+Information is stored in 13 members of the IPv4 header
+(the 14th member, IP Options, which is an extension to the IPv4 header, is optional).
+The IPv4 header is represented by the `iphdr` structure.
+
+Fields of struct iphdr:
+-------------------------
+  
+  1. **ihl**: 
+     - Internet Header Length. The length of the IPv4 header, measured in multiples of 4 bytes. 
+     - The minimum size of the IPv4 header is 20 bytes (no options), and the maximum size is 60 bytes.
+     - The corresponding `ihl` values are:
+       - `5` for minimum IPv4 header size (20 bytes).
+       - `15` for maximum IPv4 header size (60 bytes).
+
+  2. **version**: 
+     - This must be `4` (since it's IPv4).
+
+  3. **tos**: 
+     - 8-bit field that sets the priority of the packet and how the packet will be moved in network traffic (low delay, low cost, etc.).
+     
+     +-----------------------------------------------------+
+     | PRECEDENCE (3b) | D | T | R | C | Reserved (1b)    |
+     +-----------------------------------------------------+
+
+     → **precedence**: 3 bits that scale the importance of the packet on a scale of 0-7 (7 being the highest).
+
+     → **TOS flags**:
+     +-----------------+-----------------------------+
+     | Section         | What it Controls            |
+     +-----------------+-----------------------------+
+     | PRECEDENCE (3b) | Importance of the packet    |
+     | D (1b)          | Prefer low delay            |
+     | T (1b)          | Prefer high throughput      |
+     | R (1b)          | Prefer high reliability     |
+     | C (1b)          | Prefer low-cost route       |
+     | Rsv (1b)        | Unused                      |
+     +-----------------+-----------------------------+
+
+     **TOS Flag Meaning**:
+     +-----+-----------------------------+
+     | Bit | Name                        |
+     +-----+-----------------------------+
+     | D   | Low Delay                   |
+     |     | “Send me fast, minimal wait” (Good for voice/gaming) |
+     | T   | High Throughput             |
+     |     | “Give me more bandwidth” (Good for downloads)       |
+     | R   | Reliability                 |
+     |     | “Make sure I don’t get lost” (Good for emails/data) |
+     | C   | Low Cost                    |
+     |     | “Use cheaper/less expensive paths”                  |
+     +-----+-----------------------------+
+     
+  **IMPORTANT**: Modern System: DSCP + ECN (Differentiated Services & Explicit Congestion Notification)
+
+  **1. DSCP (Differentiated Services Code Point)** - 6 bits:
+     - This is the modern replacement for Precedence + TOS flags.
+     - Instead of 3 bits of precedence + 4 bits for flags, 6 bits are now used to define 64 different traffic classes.
+     - **DSCP tells routers**:
+       - How important the packet is.
+       - What QoS (Quality of Service) behavior it wants.
+       - The priority for scheduling, bandwidth, and queuing.
+
+     → **DSCP is the modern QoS system**.
+
+  **2. ECN (Explicit Congestion Notification)** - 2 bits:
+     - ECN provides congestion information without dropping packets.
+     
+     +------------------------------+------------------+
+     |        DSCP (6 bits)         |    ECN (2 bits)  |
+     +------------------------------+------------------+
+
+     **ECN Value Meaning**:
+     - `00` = Not ECN capable.
+     - `01` = ECN capable.
+     - `10` = ECN capable.
+     - `11` = Congestion Experienced (CE).
+
+     **ECN Working**:
+     1) The sender, through the SYN packet, tells the router and receiver that it's ECN-capable. When sending packets, if the router's queue is full (or near full), it sets the ECN bit to `11` (Congestion Experienced).
+     2) When the receiver gets the packet, it sees the CE bit and sends an ACK packet to the sender, setting the **ECE (ECN Echo)** bit.
+     3) The sender, on receiving this ACK, reduces the rate of packet transmission. This acts like dropped packets but is controlled by the sender itself.
+
+  4. **id**: 
+     - The `id` field is important for fragmentation. When fragmenting an SKB (Socket Buffer), the `id` value of all fragments of that SKB must be the same.
+     - Reassembling fragmented packets is done according to the `id` of the fragments.
+
+  5. **frag_off**: 
+     - A 16-bit field that contains two pieces of information:
+       - **Fragment Offset** (lower 13 bits).
+       - **Flags** (upper 3 bits).
+     
+     → **Fragment Offset** (lower 13 bits):
+     - Indicates where this fragment belongs in the original packet. It is measured in units of 8 bytes.
+     - Why 8 bytes? Because the field is only 13 bits, which allows a max offset of 8191 × 8 = 65528 bytes (fits IPv4 max size).
+
+     **Example**:
+     - Original packet = 4000 bytes, split into 3 fragments.
+       - Fragment 1 → offset = 0.
+       - Fragment 2 → offset = 1480 / 8 = 185.
+       - Fragment 3 → offset = 2960 / 8 = 370.
+
+     The receiver multiplies the offset by 8 to know the exact position in the original packet.
+
+     → **Flags** (upper 3 bits):
+     - Controls fragmentation:
+       - **MF (More Fragments)** → `001`: Set for all fragments except the last one. Means “more fragments are coming.”
+       - **DF (Don’t Fragment)** → `010`: Packet must not be fragmented. If the network MTU is smaller, the packet will be dropped and the sender gets an ICMP “Fragmentation needed” error.
+       - **CE (Congestion Experienced)** → `100`: Used for Explicit Congestion Notification (ECN). Indicates network congestion without dropping the packet.
+
+  6. **ttl (Time To Live)**:
+     - This is a hop counter. Each forwarding node decreases the TTL by 1.
+
