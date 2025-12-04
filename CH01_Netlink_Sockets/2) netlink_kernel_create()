@@ -1,0 +1,60 @@
+netlink_kernel_create() Function
+---------------------------------
+
+The function `netlink_kernel_create()` is used in the Linux kernel to create a netlink socket that allows communication between the kernel and userspace applications via a specific netlink protocol.
+
+Here’s the signature of the function:
+
+    struct sock *netlink_kernel_create(struct net *net, int protocol, struct netlink_kernel_cfg *cfg);
+
+Arguments of `netlink_kernel_create()`
+---------------------------------------
+
+1. **struct net *net**:
+    - This argument specifies the network namespace in which the netlink socket is being created.
+    - In most cases, you can pass `&init_net`, which refers to the initial network namespace. For custom network namespaces, you would use a different `net` object.
+
+    **Purpose**: This argument ensures that the socket is created in the correct network namespace, especially in environments where there are multiple network namespaces (e.g., containers or virtualized environments).
+
+2. **int protocol**:
+    - This is the netlink protocol that the socket will use. It specifies which protocol the socket is created for (e.g., `NETLINK_ROUTE`, `NETLINK_AUDIT`, `NETLINK_CUSTOM`).
+
+    **Purpose**: It tells the kernel which protocol family the socket will communicate over. For example:
+        - `NETLINK_ROUTE` for routing protocol messages.
+        - `NETLINK_AUDIT` for audit messages.
+        - `NETLINK_NETFILTER` for Netfilter-related messages.
+        - `NETLINK_CUSTOM` for a custom protocol (user-defined protocol).
+
+3. **struct netlink_kernel_cfg *cfg**:
+    - This is a pointer to a structure that contains configuration information for the netlink socket. It specifies how the kernel should behave when interacting with this socket, including the input handler function and other configuration settings.
+
+    **Purpose**: It allows you to provide a callback function (usually called an input handler) that the kernel will use to process incoming messages on the socket. The handler is called whenever the kernel receives a message from userspace via this netlink socket.
+
+The structure `struct netlink_kernel_cfg` is defined as:
+
+    struct netlink_kernel_cfg {
+        int groups;                          // Optional: netlink multicast groups
+        void (*input)(struct sk_buff *skb);   // Required: callback function to process incoming messages
+        void (*dump)(struct sk_buff *skb);    // Optional: callback function for dumping information
+        void *cb_data;                       // Optional: private data passed to the input handler
+    };
+
+Input Handler Function
+-----------------------
+
+The `input` field of `struct netlink_kernel_cfg` is a pointer to a function that handles incoming netlink messages. This function is defined by the kernel module or application that created the netlink socket. Whenever the kernel receives a netlink message for the specified protocol, it invokes the input function.
+
+Purpose of the Input Handler
+-----------------------------
+
+The input handler function is the mechanism that allows the kernel to process incoming messages. When a netlink message arrives, the kernel calls this function to handle the message. The handler is responsible for decoding the message, processing it based on the protocol, and potentially sending a response back to the userspace.
+
+Input Handler Function Signature
+---------------------------------
+
+The handler function you define should have the following signature:
+
+    void my_input_handler(struct sk_buff *skb);
+
+- **skb**: This is the socket buffer that contains the netlink message. The kernel passes the entire message inside this buffer to your handler. You can extract data from the buffer to process the message.
+
