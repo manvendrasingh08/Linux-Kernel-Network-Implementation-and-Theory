@@ -1,0 +1,56 @@
+Key Points Breakdown:
+----------------------
+
+1. **Linux Kernel Networking Subsystem and Layers:**
+
+    The Linux kernel networking subsystem is responsible for managing communication 
+    between different parts of the system and between the system and external networks.
+    This subsystem operates in three main layers:
+
+    - **Network Device Layer:**
+        - Interacts directly with hardware (network interfaces like Ethernet, Wi-Fi).
+
+    - **Protocol Layer:**
+        - Handles networking protocols like TCP/IP, UDP, etc.
+
+    - **Socket Layer:**
+        - Provides the interface for user applications to send and receive data.
+
+2. **Netlink Socket Interface:**
+
+    - These are a type of raw socket that are primarily used for communication between userspace and kernel space in Linux. 
+      They allow bidirectional communication and are used for tasks like network configuration, routing updates, and interface changes.
+    - Netlink was introduced in the 2.2 Linux kernel as a more flexible and efficient alternative to IOCTL for communication between userspace and kernel.
+    - **AF_NETLINK** is the address family used for netlink sockets.
+    - These sockets allow bidirectional communication between userspace applications and the kernel.
+
+3. **Why Netlink Was Introduced:**
+
+    **IOCTL** (Input/Output Control) was the previous method for communication between userspace programs and the kernel, but it had several limitations:
+
+    - **Asynchronous Communication:**
+        - IOCTL cannot send asynchronous messages, meaning the kernel cannot notify userspace when something happens (e.g., network changes) without userspace requesting it.
+        
+    - **Complexity:**
+        - IOCTL requires predefined numbers to identify operations, making it cumbersome to manage, especially as new kernel features are added.
+
+4. **How Netlink Works:**
+
+    Netlink simplifies this communication model. In a typical netlink operation:
+
+    1. Userspace program opens and registers a netlink socket.
+    2. The netlink socket communicates bidirectionally with the kernel's netlink socket.
+        - Userspace sends configuration messages (e.g., network settings) and receives responses.
+    3. **Asynchronous Communication:**
+        - Netlink sockets allow the kernel to send asynchronous messages to userspace, enabling real-time notifications without userspace needing to request updates.
+
+    In essence, netlink sockets provide a cleaner, more flexible, and efficient way for userspace programs to interact with the kernel, especially compared to the older, rigid IOCTL mechanism.
+
+5. **Socket Types:**
+
+    - **SOCK_RAW:** 
+        - This type of socket allows low-level access to the network layer. It allows full control of packet headers and contents, but it requires root privileges.
+
+    - **SOCK_DGRAM:** 
+        - This type of socket is used for message-oriented communication, similar to UDP. It's often used for less privileged communication, like with netlink.
+
