@@ -21,7 +21,7 @@ Fields of struct iphdr:
      - 8-bit field that sets the priority of the packet and how the packet will be moved in network traffic (low delay, low cost, etc.).
      
      +-----------------------------------------------------+
-     | PRECEDENCE (3b) | D | T | R | C | Reserved (1b)    |
+     | PRECEDENCE (3b) | D | T | R | C | Reserved (1b)     |
      +-----------------------------------------------------+
 
      → **precedence**: 3 bits that scale the importance of the packet on a scale of 0-7 (7 being the highest).
@@ -111,4 +111,80 @@ Fields of struct iphdr:
 
   6. **ttl (Time To Live)**:
      - This is a hop counter. Each forwarding node decreases the TTL by 1.
+     
+     
+     
+     
+### How is the IPv4 header attached to sk_buff?
+---------------------------------------------------
+
+In the case of IPv4, the IPv4 header (defined by the iphdr struct) is attached to the sk_buff in a couple of different ways depending on how the packet is being constructed or processed.
+
+The IPv4 header is usually located at the start of the data buffer in sk_buff. Here’s how the header is typically attached:
+
+1️⃣ **sk_buff Structure and IPv4 Header Location**
+------------------------------------------------
+The sk_buff structure has a pointer to the data it carries, and this data is where the IPv4 header is located:
+
+struct sk_buff {
+    ...
+    unsigned char *data;          // Pointer to data (can be the IPv4 header + payload)
+    unsigned char *head;          // Start of the allocated memory block
+    unsigned char *tail;          // End of the allocated memory block (points to the next free byte)
+    unsigned char *end;           // End of allocated memory (just after tail)
+    ...
+};
+
+The key here is the **data** pointer, which points to the actual start of the packet. For IPv4, the IPv4 header is placed at the beginning of the **data** field in sk_buff.
+
+- For a simple IPv4 packet (without options), the IPv4 header starts at the beginning of the data buffer.
+- For larger packets (with options or fragmented packets), the IPv4 header is still at the start, but additional memory is allocated for the options and payload.
+
+2️⃣ **Setting the IPv4 Header in sk_buff**
+----------------------------------------
+In the process of preparing a packet to be sent (such as using ip_queue_xmit() for TCP or ip_append_data() for UDP), the IPv4 header is written directly to the beginning of the sk_buff data.
+
+**Example (Inside ip_queue_xmit()):**
+Here’s how the kernel attaches the IPv4 header to the sk_buff before transmission:
+
+struct iphdr *iph;  // Pointer to IPv4 header
+struct sk_buff *skb; // The sk_buff holding the packet
+
+// Allocate space for the IPv4 header (if necessary) and set the data pointer
+skb_push(skb, sizeof(struct iphdr));  // Move data pointer to make room for IPv4 header
+
+iph = ip_hdr(skb); // Get pointer to the IPv4 header within the sk_buff
+
+// Now set the fields of the IPv4 header
+iph->version = 4;  // IPv4 version
+iph->ihl = 5;      // IHL (header length) = 5 (no options)
+iph->tos = 0;      // Type of Service
+iph->tot_len = htons(skb->len);  // Total length (header + payload)
+iph->id = htons(12345);  // Identification (arbitrary)
+iph->frag_off = 0;  // Fragmentation offset
+iph->ttl = 64;      // Time To Live (TTL)
+iph->protocol = IPPROTO_TCP;  // Protocol (e.g., TCP)
+iph->check = 0;     // Checksum (set to 0 for now)
+iph->saddr = htonl(src_ip);  // Source address (set this)
+iph->daddr = htonl(dest_ip); // Destination address (set this)
+iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl); // Compute the checksum
+
+
+skb_push(skb, sizeof(struct iphdr)): This adjusts the sk_buff's data pointer, reserving space for the IPv4 header.
+
+ip_hdr(skb): This macro returns a pointer to the IPv4 header within the sk_buff structure.
+
+IPv4 header fields are then set (source and destination IP, TTL, protocol, etc.).
+
+After this, the sk_buff now contains:
+
+- The IPv4 header at the start of its data buffer.
+- The payload (e.g., TCP data) follows the IPv4 header.
+
+3️⃣ **When to Use skb_push() and skb_pull()**
+--------------------------------------------
+- **skb_push(skb, n)**: This function moves the data pointer forward by `n` bytes to make room for the header. It is used when the kernel needs to insert a header (like the IPv4 header).
+    - **`skb_push(skb, sizeof(struct iphdr))`** moves the data pointer forward by the size of the IPv4 header, so the header can be inserted at the start.
+- **skb_pull(skb, n)**: This function moves the data pointer back by `n` bytes and removes the first `n` bytes of data. It’s useful for stripping headers (e.g., when processing an incoming packet).
+
 
