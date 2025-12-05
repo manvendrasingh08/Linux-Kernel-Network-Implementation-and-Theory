@@ -1,0 +1,169 @@
+📡 IPv4 Multicast Receive Path (Easy but Complete)
+
+
+5️⃣ Summary in Simple Words
+===========================
+
+✔️ Step 1 — A multicast packet arrives
+--------------------------------------
+ip_rcv() → sanity checks → NF_INET_PRE_ROUTING → ip_rcv_finish()
+
+
+✔️ Step 2 — Routing lookup detects a multicast destination
+----------------------------------------------------------
+IPv4 multicast addresses = 224.0.0.0 to 239.255.255.255.
+ip_route_input_noref() identifies the destination as multicast.
+
+
+✔️ Step 3 — Linux checks if:
+-----------------------------
+• The host is in the multicast group → deliver locally
+• OR the host is a multicast router → forward using multicast routing subsystem
+
+
+✔️ Step 4 — dst->input is set accordingly:
+------------------------------------------
+• ip_local_deliver   (local multicast delivery)
+• OR
+• ip_mr_input        (multicast routing handler)
+
+
+✔️ Step 5 — dst_input() calls whichever was chosen
+---------------------------------------------------
+dst_input(skb) → skb->dst->input(skb)
+
+
+✔️ Step 6 — If forwarding:
+---------------------------
+• TTL decreased  
+• Header checksum updated  
+• NF_INET_FORWARD hook executed  
+• Packet transmitted out the next interface
+
+=================================================
+
+1️⃣ ip_rcv() Handles Multicast Too
+----------------------------------
+Multicast packets enter the stack the same way as unicast:
+
+   ip_rcv()
+     → sanity checks (IHL, version, checksum)
+     → NF_INET_PRE_ROUTING
+     → ip_rcv_finish()
+
+Inside ip_rcv_finish(), Linux calls:
+
+   ip_route_input_noref(skb, daddr, saddr, tos, dev)
+
+This is where multicast-specific logic begins.
+
+
+2️⃣ Detecting Multicast in Routing Lookup
+------------------------------------------
+
+IPv4 multicast addresses = 224.0.0.0 to 239.255.255.255.
+
+
+In ip_route_input_noref():
+
+   if (ipv4_is_multicast(daddr)) {
+       ...
+   }
+
+Steps inside this block:
+
+• Step 1: Check if destination IP is multicast.
+• Step 2: Check if the host belongs to that multicast group:
+
+       our = ip_check_mc_rcu(in_dev, daddr, saddr, protocol)
+
+       our = 1 → host is a member of the multicast group
+       our = 0 → host is not a member
+
+• Step 3: Check if host is a multicast router:
+
+       CONFIG_IP_MROUTE enabled?
+       IN_DEV_MFORWARD(in_dev) set?
+
+If either condition is true, Linux routes the multicast packet.
+
+
+3️⃣ Choosing dst->input for Multicast
+--------------------------------------
+Multicast routing logic is handled inside:
+
+   ip_route_input_mc()
+
+Cases:
+
+Case A — Host is a member of the multicast group (our == 1):
+------------------------------------------------------------
+   dst->input = ip_local_deliver
+   rtable->flags |= RTCF_LOCAL
+
+→ Packet is delivered locally.
+
+Case B — Host is a multicast router (forwarding enabled):
+---------------------------------------------------------
+   dst->input = ip_mr_input
+
+→ Packet is passed to multicast routing subsystem.
+
+After this, ip_rcv_finish() calls:
+
+   dst_input(skb)
+
+Which simply runs the chosen callback:
+
+   skb->dst->input(skb)
+
+
+4️⃣ Multicast Forwarding Path (ip_mr_input → ip_mr_forward)
+-----------------------------------------------------------
+If dst->input = ip_mr_input, the packet enters multicast routing.
+
+Linux uses the MFC (Multicast Forwarding Cache) to decide forwarding.
+
+If a matching MFC entry exists:
+
+   ip_mr_forward()
+       → ipmr_queue_xmit()
+
+Inside ipmr_queue_xmit():
+
+• TTL is decreased:
+      ip_decrease_ttl(ip_hdr(skb))
+
+• IP checksum updated
+
+• Netfilter hook invoked:
+      NF_HOOK(NFPROTO_IPV4, NF_INET_FORWARD, ...)
+
+Finally calls:
+
+      ipmr_forward_finish()
+
+Which performs:
+
+• Update forwarding statistics
+• Process IP options if present
+• Call dst_output(skb) to transmit packet
+
+
+5️⃣ Summary (Human-Friendly)
+----------------------------
+• ip_rcv() receives multicast packets normally.
+• ip_route_input_noref() detects multicast.
+• Linux checks:
+      - Is the host in the multicast group?
+      - OR is it a multicast router?
+
+• Based on this:
+      dst->input = ip_local_deliver   (local copy)
+      dst->input = ip_mr_input        (router forwarding)
+
+• dst_input() then calls whichever callback was chosen.
+
+• Multicast forwarding reduces TTL, applies firewall rules,
+  and sends the packet out the next interface.
+

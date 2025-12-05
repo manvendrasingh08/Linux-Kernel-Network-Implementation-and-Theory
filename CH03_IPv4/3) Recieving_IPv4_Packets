@@ -1,0 +1,152 @@
+[Network Driver]
+      ↓
+   ip_rcv()
+      ↓
+[Sanity checks]
+      ↓
+NF_INET_PRE_ROUTING (Netfilter)
+      ↓
+  ip_rcv_finish()
+      ↓
+  Routing Lookup
+     /       \
+local       forward
+  |            |
+ip_local_deliver()   ip_forward()
+  ↓            ↓
+NF_INET_LOCAL_IN   NF_INET_FORWARD
+  ↓            ↓
+ip_local_deliver_finish()  ip_forward_finish()
+  ↓
+Transport Layer (TCP/UDP/ICMP/…)
+
+
+
+🌐 Easy Explanation of the IPv4 Receive Path (But Complete)
+==========================================================
+
+When an IPv4 packet arrives at your machine, the Linux kernel follows a very
+specific path to process it. The diagram you posted shows that flow.
+
+Let’s break it down from start to finish.
+
+1️⃣ Packet Arrives at Network Driver
+------------------------------------
+- Your network card receives an Ethernet frame.
+- The Ethernet driver hands this packet to the Linux network stack.
+- Linux sees the Ethernet type 0x0800 → means the payload is IPv4.
+- Earlier during boot, Linux already registered the IPv4 handler (ip_rcv()),
+  so the packet is passed to ip_rcv().
+
+2️⃣ ip_rcv() — First Checkpoint (Sanity Checks)
+-----------------------------------------------
+ip_rcv() is the main entry point for all IPv4 packets (unicast, multicast, broadcast).
+
+Inside ip_rcv():
+
+✔️ Header Length Check
+   - IPv4 header has a variable length (ihl in units of 4 bytes).
+   - Minimum valid header = 20 bytes.
+   - So ihl must be ≥ 5.
+   - If less → packet is corrupt → drop.
+
+✔️ Version Check
+   - IPv4 version must be 4.
+   - If not 4 → drop.
+
+✔️ Checksum Check
+   - RFC 1122 requires every host to verify the IPv4 header checksum.
+   - Kernel calls ip_fast_csum().
+   - If checksum is bad → packet is silently dropped.
+
+If all checks are OK → next step.
+3️⃣ Netfilter Hook: NF_INET_PRE_ROUTING
+---------------------------------------
+After sanity checks, ip_rcv() calls:
+
+   NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING, skb, dev, NULL, ip_rcv_finish)
+
+This is the first interception point for Netfilter/iptables.
+
+At this stage, Netfilter modules can:
+
+   ACCEPT → continue normal processing.
+   DROP   → discard packet immediately.
+   STOLEN → Netfilter takes ownership; IPv4 stack stops further handling.
+   QUEUE / REPEAT / STOP → advanced behaviors.
+
+If no Netfilter rules or everything ACCEPTs → processing continues
+to ip_rcv_finish().
+
+
+4️⃣ ip_rcv_finish() — Routing Decision
+--------------------------------------
+This is where the real IPv4 logic begins.
+
+The routing decision happens **inside ip_rcv_finish()**, specifically during
+the routing lookup:
+
+   ip_route_input_noref(skb, iph->daddr, iph->saddr, iph->tos, skb->dev);
+
+This function:
+
+   - Checks routing tables
+   - Determines if the destination IP belongs to:
+        • local host
+        • another machine (forwarding)
+        • multicast
+   - Builds the dst entry
+   - Sets the callback that will run next:
+
+        dst->input = ip_local_deliver   // packet for this machine
+        dst->input = ip_forward         // packet must be forwarded
+        dst->input = ip_mr_input        // multicast case
+
+ip_rcv_finish() then executes:
+
+   dst_input(skb);
+
+dst_input() simply calls the function chosen earlier:
+
+   skb->dst->input(skb);
+
+
+5️⃣ Case 1: Local Delivery Path
+-------------------------------
+If routing says the packet belongs to the local machine:
+
+Step A → ip_local_deliver()
+   - Prepares the packet for transport-layer processing.
+
+Netfilter Hook: NF_INET_LOCAL_IN
+   - Second interception point.
+   - Local firewall rules can drop or modify packets.
+
+Step B → ip_local_deliver_finish()
+   - Decodes the Protocol field.
+   - Passes the packet to the correct transport layer:
+
+        TCP  → tcp_v4_rcv()
+        UDP  → udp_rcv()
+        ICMP → icmp_rcv()
+
+This completes the local delivery path.
+
+
+6️⃣ Case 2: Forwarding Path (Linux acting as a Router)
+------------------------------------------------------
+If routing says the packet must be forwarded:
+
+Step A → ip_forward()
+   - Decreases TTL
+   - Recalculates header checksum
+   - Applies forwarding rules
+
+Netfilter Hook: NF_INET_FORWARD
+   - Third interception point for forwarded traffic.
+
+Step B → ip_forward_finish()
+   - Prepares the packet for sending to the next hop.
+
+Packet then goes to the Tx (Transmit) path (ip_output(), etc.)
+
