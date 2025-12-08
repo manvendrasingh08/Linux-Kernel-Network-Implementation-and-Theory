@@ -1,0 +1,126 @@
+IP Options Overview
+===================
+When an IPv4 packet is created, it may include options in its header. These options are used for special purposes like routing, security, or debugging. IP options can either be **single-byte** (e.g., "End of Option List" or "No Operation") or **multibyte** (e.g., Loose Source Routing, Timestamp).
+
+Structure of Multibyte IP Options
+----------------------------------
+For **multibyte options**, after the option type byte, there are three fields:
+
+1. **Length (1 byte)** – Specifies how long the entire option is, in bytes.
+2. **Pointer (1 byte)** – An offset or pointer used by routers to store additional information related to the option.
+3. **Option Data** – This is where the **actual option data** is stored.
+
+What is the Option Data Field Used For?
+---------------------------------------
+The **Option Data** field is a storage space where **routers** or **devices** along the packet's path can place specific information related to the option.
+
+### Example 1: Loose Source Routing (IPOPT_LSRR)
+- This option allows you to specify a list of routers that a packet should pass through.  
+- In the **Option Data** field:
+    - **List of routers**: Routers' IP addresses are stored, and the packet is forced to go through these routers (though others may be added in between the listed ones).
+    - **Option Data** stores the IP addresses of the routers the packet should pass through.
+
+### Example 2: Timestamp (IPOPT_TIMESTAMP)
+- This option lets you **record the time** when a packet passes through a router.
+    - **Option Data** stores the **timestamp** value (how much time has passed) when the packet reaches a particular router.
+    - It may also store the **IP address** of the router that added the timestamp.
+
+### Example 3: Record Route (IPOPT_RR)
+- This option records the **path** that the packet took through the network.
+    - As the packet traverses routers, **each router appends its IP address** to the Option Data field.
+    - **Option Data** holds a **list of IP addresses** that represent the path the packet took.
+
+Why is Option Data Important?
+-----------------------------
+- **Flexibility**: The **Option Data** field allows various types of data to be stored, based on the specific option type.  
+  Examples:
+  - **Timestamps** can store time-related data.
+  - **Source Routing** can store router IP addresses.
+  - **Record Route** can store the addresses of routers the packet traversed.
+  
+- **Router use**: Routers use this space to store relevant data about how the packet is being routed, which can be helpful for debugging, performance measurement, or managing routing paths.
+
+---
+
+Single-Byte Options
+===================
+In addition to the multibyte options, there are also **single-byte options** that have a special purpose. These are simpler and are typically used for specific control or padding functions.
+
+1. **End of Option List (IPOPT_END)**:
+   - **Type**: 1-byte option.
+   - **Purpose**: Indicates the end of the options field.
+   - **Data**: All bits are 0 (this is a special marker).
+
+2. **No Operation (IPOPT_NOOP)**:
+   - **Type**: 1-byte option.
+   - **Purpose**: This is used for internal padding or alignment in the options field.
+   - **Data**: All bits are 0, effectively a “do nothing” operation.
+
+---
+
+Important IP Options
+====================
+
+### 1. **Security (IPOPT_SEC)**:
+- **Option Number**: 2
+- **Class**: Control
+- **Purpose**: Used for **security** or **handling restrictions**. Originally intended for military applications.
+- **Data**: This can contain security parameters or closed user group parameters, and it defines how the packet should be handled based on security policies.
+
+### 2. **Loose Source Record Route (IPOPT_LSRR)**:
+- **Option Number**: 3
+- **Class**: Control
+- **Purpose**: Specifies a **list of routers** the packet should pass through. Intermediate routers may be included, but the order must be preserved.
+- **Data**: Contains the **IP addresses** of routers that the packet should pass through.
+
+### 3. **Commercial Internet Protocol Security Option (IPOPT_CIPSO)**:
+- **Option Number**: 60
+- **Class**: Control
+- **Purpose**: Used for network labeling standard, often used in **military or security contexts**. It labels the packet for various security and policy enforcement.
+- **Data**: Contains labels for the packet and network path to ensure secure routing and delivery.
+
+### 4. **Router Alert (IPOPT_RA)**:
+- **Option Number**: 148
+- **Class**: Control
+- **Purpose**: This option alerts routers to process the packet in a special way (e.g., for debugging or management purposes).
+- **Data**: Contains information used to alert the router (such as protocol-specific data).
+
+---
+
+Example of How Multiple Options Work Together
+=============================================
+If multiple options are used, they are simply **concatenated** one after the other in the options field.
+
+- **Loose Source Routing (IPOPT_LSRR)** could list routers the packet must traverse.
+- **Timestamp (IPOPT_TIMESTAMP)** could record the time each router in the list adds a timestamp as the packet passes.
+- These two options would be placed sequentially in the header, each with its own **Option Type**, **Length**, **Pointer**, and **Option Data**.
+
+---
+
+Alignment and Padding
+======================
+The IPv4 header must be **aligned to 4-byte boundaries**, which means that if the total size of the options doesn’t perfectly fit, **padding bytes** are added. For example, if the options field totals 6 bytes, it would need 2 additional padding bytes to make it a total of 8 bytes.
+
+This ensures that the next part of the packet (such as the data) starts at the correct memory boundary.
+
+---
+
+**Summary of Key Options:**
+
+| Linux Symbol      | Option Number | Class             | Copied | Description                                |
+|------------------|---------------|-----------------|--------|--------------------------------------------|
+| IPOPT_END         | 0             | End of Option List | -      | Marks end of options field                 |
+| IPOPT_NOOP        | 1             | No Operation     | -      | Padding for alignment                       |
+| IPOPT_SEC         | 130           | Control          | 1      | Security info (military, restricted)       |
+| IPOPT_LSRR        | 131           | Control          | 1      | Loose Source Record Route                  |
+| IPOPT_TIMESTAMP   | 68            | Measurement      | 1      | Record timestamps as packet travels        |
+| IPOPT_CIPSO       | 60            | Control          | 1      | Commercial IP Security Option              |
+| IPOPT_RR          | 7             | Control          | 1      | Record Route                               |
+| IPOPT_SID         | 8             | Control          | 1      | Stream ID                                  |
+| IPOPT_SSRR        | 137           | Control          | 1      | Strict Source Record Route                 |
+| IPOPT_RA          | 148           | Control          | 1      | Router Alert                               |
+
+---
+
+This should give you a **clear view** of how **IP options** work in IPv4 headers, with both **single-byte** and **multibyte options**, their **structure**, **use**, and **memory storage**. If you need further explanation on any specific option, feel free to ask!
+
