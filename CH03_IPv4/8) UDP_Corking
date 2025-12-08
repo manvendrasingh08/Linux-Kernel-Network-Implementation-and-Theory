@@ -1,0 +1,171 @@
+UDP Corking Feature & Whats there for TCP?
+=============================================
+
+The UDP Corking feature is a mechanism introduced in Linux Kernel 2.5.44 to optimize the transmission of UDP packets. 
+It works by accumulating data into a single packet, preventing it from being sent immediately. Once the corking is disabled, 
+all accumulated data is sent in a single UDP datagram.
+
+Main Purpose of UDP Corking:
+-----------------------------
+The main purpose of corking is to reduce overhead when sending multiple small UDP packets, particularly when they are part 
+of the same logical message or stream. Corking allows these smaller messages to be bundled into one larger UDP packet, which 
+reduces the number of packets transmitted over the network.
+
+How Does UDP Corking Work?
+===========================
+1️⃣ Corking Enabled (UDP_CORK option):
+---------------------------------------
+- When the **UDP_CORK socket option** is enabled, all data sent on that socket is **accumulated**.
+- The data will **not be sent immediately**.
+- The kernel buffers all data written to the socket until corking is "removed" or disabled.
+
+2️⃣ When Corking is Disabled:
+------------------------------
+- Once corking is disabled (via the **setsockopt() call** or specific flags like **MSG_MORE**), 
+  the kernel sends all accumulated data in a **single UDP packet**.
+
+3️⃣ Example Use Case:
+----------------------
+- Multiple small **UDP messages** are sent, but they are logically part of the same data (e.g., related packets).
+- Instead of sending each of these small messages individually, which could result in higher network overhead, 
+  the kernel waits until the cork is removed and sends them all together in a **single datagram**.
+
+When Is Corking Useful?
+========================
+- **Efficiency**: If you’re sending many small UDP packets (e.g., status updates or event notifications), 
+  using UDP corking ensures that these small packets are sent together, reducing the number of packets and network overhead.
+  
+- **Application-level bundling**: If an application has several small pieces of data to send over UDP, 
+  it can use corking to combine these smaller packets into a larger one to be sent at once.
+
+- **Reducing network load**: By batching smaller UDP packets together, corking reduces the number of packets being sent 
+  and the processing overhead on network interfaces and routers.
+
+---
+
+UDP Corking in Action
+======================
+1️⃣ **Enable Corking**:
+-------------------------
+- The application calls **setsockopt()** to enable the **UDP_CORK** option on the UDP socket.
+- This causes the kernel to **buffer any data** written to the socket, **not sending it right away**.
+
+2️⃣ **Send Data**:
+-----------------
+- The application writes **multiple small pieces of data** to the corked UDP socket.
+- The kernel doesn't immediately send these packets.
+
+3️⃣ **Disable Corking**:
+------------------------
+- When the application is done writing data, it disables corking (either by calling **setsockopt()** with **UDP_CORK** turned off, 
+  or by sending a final message with a special flag like **MSG_MORE**).
+  
+- This triggers the kernel to **flush** the accumulated data into **one single UDP datagram**.
+
+4️⃣ **Result**:
+-------------
+- The kernel sends a **single UDP packet** containing all the accumulated data.
+
+---
+
+How to Enable/Disable UDP Corking
+=================================
+1️⃣ **Enabling Corking**:
+--------------------------
+  setsockopt(socket, SOL_SOCKET, UDP_CORK, &enable, sizeof(enable));
+
+2️⃣ **Disabling Corking**:
+--------------------------
+  setsockopt(socket, SOL_SOCKET, UDP_CORK, &disable, sizeof(disable));
+
+Alternatively, corking can be disabled when a specific flag (like **MSG_MORE**) is used in **sendmsg()**.
+
+---
+
+What Happens Without Corking?
+===============================
+- Without corking, each call to **sendto()** or **sendmsg()** would result in a separate **UDP packet** being sent for each piece of data.
+
+1️⃣ **With Corking**:
+---------------------
+- All data is accumulated in a buffer and then sent in a single packet when corking is disabled.
+
+2️⃣ **Without Corking**:
+------------------------
+- Each call to **sendto()** creates a **separate UDP packet** on the wire.
+- This leads to **higher overhead** when dealing with many small UDP packets, as each packet requires its own **network header** 
+  and creates unnecessary **congestion**.
+
+---
+
+UDP Corking and the Kernel (Kernel 2.6.39 and Later)
+====================================================
+
+1️⃣ **Kernel 2.6.39 and Later**:
+-------------------------------
+- A lockless **transmit fast path** was introduced in kernel 2.6.39, improving performance when corking is not used.
+- When **UDP_CORK** is disabled or the **MSG_MORE flag** is used, the kernel avoids locking and provides a **faster transmission path**,
+  meaning fewer CPU cycles are spent on managing the socket during transmission.
+
+---
+
+TCP and Buffering of Data
+===========================
+TCP does not immediately create and send a packet for each call. Instead, **TCP buffers the data** in the socket buffer 
+and sends it in **segments** (larger chunks) when it is appropriate to do so. 
+
+TCP and Buffering Process:
+---------------------------
+1️⃣ **TCP is Connection-Oriented**:
+-----------------------------------
+- It ensures **reliable**, **ordered delivery of data**. 
+- When you call **send()** in a TCP socket, the kernel doesn't send each small piece of data immediately. 
+  Instead, it buffers the data in the socket's send buffer.
+
+2️⃣ **Socket Buffer**:
+----------------------
+- The kernel uses a **buffer** (a space in memory) to temporarily store data that is being sent.
+- This helps ensure **efficient use of the network**, minimizing the number of **network packets** that need to be sent.
+
+---
+
+What Happens When You Call `send()` in TCP?
+===========================================
+1️⃣ **Data is Written to the Socket Buffer**:
+-------------------------------------------
+- When you call **send()**, the data is copied into the **send buffer** (part of the socket). The kernel doesn't immediately send it over the network.
+
+2️⃣ **TCP Decides When to Send the Data**:
+-----------------------------------------
+- The kernel checks if it can send the data now or if it should wait.
+- It will try to **combine smaller pieces of data into larger segments** for efficiency. This is where **Nagle’s Algorithm** comes into play.
+
+---
+
+Nagle's Algorithm
+=================
+**Nagle’s Algorithm** is the mechanism TCP uses to avoid sending too many small packets. Here's how it works:
+
+1️⃣ **Unacknowledged Data**:
+----------------------------
+- If there’s **unacknowledged data** in flight (i.e., data that has been sent but not yet acknowledged by the receiver), TCP will **buffer new small data** in the socket and wait before sending it out.
+
+2️⃣ **Combining Small Writes**:
+-------------------------------
+- If you call **send()** multiple times to send small pieces of data, TCP may **combine them into one larger packet** to avoid sending multiple tiny packets over the network.
+- TCP waits for an acknowledgment of previously sent data or until enough data has been accumulated to form a larger segment.
+
+3️⃣ **Flush the Buffer**:
+-------------------------
+- Once enough data has been accumulated or a timeout happens, TCP sends the buffered data as **one large packet**, reducing overhead and improving network efficiency.
+
+---
+
+Does `send()` Create a Packet for Each Call?
+===========================================
+No, **TCP doesn't send a packet for every `send()` call**.
+- The **data is buffered** in the **send buffer** of the socket.
+- **Multiple `send()` calls** can result in **one large TCP segment** being sent.
+- TCP controls the segmentation of data into packets (segments).
+- The kernel decides when to send the data based on buffer availability, network conditions, and **Nagle's Algorithm**.
+
