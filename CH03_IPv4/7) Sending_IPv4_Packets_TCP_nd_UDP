@@ -1,0 +1,134 @@
+When a packet is ready to be sent from the transport layer (like TCP or UDP), it needs to be handed off to the IPv4 layer (Layer 3) for transmission. There are two main methods used to send packets from Layer 4 to Layer 2 (the link layer):
+
+1️⃣ ip_queue_xmit() method: Used for transport protocols that handle fragmentation themselves (like TCP).
+2️⃣ ip_append_data() method: Used for transport protocols that do not handle fragmentation (like UDP or ICMP).
+
+---
+
+1️⃣ Scenario 1: ip_queue_xmit() (Used by TCP)
+-------------------------------------------
+For TCP (and other transport protocols that handle fragmentation), the IPv4 header is attached by the ip_queue_xmit() function before the packet is sent out.
+
+**Flow for ip_queue_xmit():**
+- Transport Layer (e.g., TCP) calls ip_queue_xmit() to prepare the packet for transmission.
+- ip_queue_xmit() checks the routing table (rtable) to find out the correct route to the destination.
+- If the route is found, ip_queue_xmit():
+    - Creates the IPv4 header for the packet.
+    - This includes setting fields like the source address, destination address, TTL, protocol, and header checksum.
+    - It then attaches the IPv4 header to the packet buffer (the sk_buff).
+- The packet, with the attached IPv4 header, is now ready to be transmitted through the network interface.
+
+**The IPv4 header is created and attached inside ip_queue_xmit()** during the process of preparing the packet.
+
+---
+2️⃣ Scenario 2: ip_append_data() (Used by UDP/ICMP)
+---------------------------------------------------
+For UDP and ICMP (which do not handle fragmentation), the IPv4 header is not directly created in the same way. Instead:
+
+**Flow for ip_append_data():**
+- UDP or ICMP calls **ip_append_data()** to prepare the packet.
+- **ip_append_data()** does not create the IPv4 header. It only prepares the data for the packet (e.g., adds transport-layer data).
+- The actual IPv4 header is added later when the **ip_push_pending_frames()** method is called, or **ip_send_skb()** (depending on the kernel version).
+- When **ip_push_pending_frames()** is invoked:
+    - It triggers the creation of the IPv4 header.
+    - The header is then attached to the packet (**sk_buff**).
+- The IPv4 header is then used to route and send the packet, similar to how it's done in **ip_queue_xmit()**.
+
+**In this case, the IPv4 header is created and attached later in the process.**
+
+---
+
+ Step-by-Step Process for ip_append_data() (UDP/ICMP)
+-------------------------------------------------------
+For UDP and ICMP, the process is slightly different. These protocols don't handle fragmentation, so they use **ip_append_data()** to prepare the packet before it’s sent.
+
+**Flow for ip_append_data():**
+
+1️⃣ **UDP/ICMP calls ip_append_data()** to prepare the packet.
+2️⃣ **Handling IP Corking (for UDP)**:
+   - The **UDP_CORK** socket option (enabled via **setsockopt()**) accumulates all data for a socket and sends it as one packet when the cork is removed.
+   - The kernel uses **ip_setup_cork()** to create a cork IP options object if needed.
+4️⃣ **Data Preparation**:
+   - The actual data for the packet is copied into the **sk_buff** (using a **getfrag()** callback). This callback handles how the data is moved from userspace to the **sk_buff** buffer.
+5️⃣ **Handling Fragments**:
+   - If the network supports **Scatter/Gather I/O (NETIF_F_SG)**, data is handled in fragments. If not, the **frag_list** is used to manage fragmented packets.
+6️⃣ **Handling Message Flags**:
+   - **MSG_MORE**: If the flag is set, it indicates more data will follow, so the kernel prepares the packet but does not send it immediately.
+   - **__ip_append_data()** is invoked to handle the actual data appending process.
+7️⃣ **Sending the Packet**:
+   - After preparing the data, **ip_send_skb()** sends the packet out via the local network interface.
+
+---
+
+### How is the IPv4 header attached to sk_buff?
+---------------------------------------------------
+
+In the case of IPv4, the IPv4 header (defined by the iphdr struct) is attached to the sk_buff in a couple of different ways depending on how the packet is being constructed or processed.
+
+The IPv4 header is usually located at the start of the data buffer in sk_buff. Here’s how the header is typically attached:
+
+1️⃣ **sk_buff Structure and IPv4 Header Location**
+------------------------------------------------
+The sk_buff structure has a pointer to the data it carries, and this data is where the IPv4 header is located:
+
+struct sk_buff {
+    ...
+    unsigned char *data;          // Pointer to data (can be the IPv4 header + payload)
+    unsigned char *head;          // Start of the allocated memory block
+    unsigned char *tail;          // End of the allocated memory block (points to the next free byte)
+    unsigned char *end;           // End of allocated memory (just after tail)
+    ...
+};
+
+The key here is the **data** pointer, which points to the actual start of the packet. For IPv4, the IPv4 header is placed at the beginning of the **data** field in sk_buff.
+
+- For a simple IPv4 packet (without options), the IPv4 header starts at the beginning of the data buffer.
+- For larger packets (with options or fragmented packets), the IPv4 header is still at the start, but additional memory is allocated for the options and payload.
+
+2️⃣ **Setting the IPv4 Header in sk_buff**
+----------------------------------------
+In the process of preparing a packet to be sent (such as using ip_queue_xmit() for TCP or ip_append_data() for UDP), the IPv4 header is written directly to the beginning of the sk_buff data.
+
+**Example (Inside ip_queue_xmit()):**
+Here’s how the kernel attaches the IPv4 header to the sk_buff before transmission:
+
+struct iphdr *iph;  // Pointer to IPv4 header
+struct sk_buff *skb; // The sk_buff holding the packet
+
+// Allocate space for the IPv4 header (if necessary) and set the data pointer
+skb_push(skb, sizeof(struct iphdr));  // Move data pointer to make room for IPv4 header
+
+iph = ip_hdr(skb); // Get pointer to the IPv4 header within the sk_buff
+
+// Now set the fields of the IPv4 header
+iph->version = 4;  // IPv4 version
+iph->ihl = 5;      // IHL (header length) = 5 (no options)
+iph->tos = 0;      // Type of Service
+iph->tot_len = htons(skb->len);  // Total length (header + payload)
+iph->id = htons(12345);  // Identification (arbitrary)
+iph->frag_off = 0;  // Fragmentation offset
+iph->ttl = 64;      // Time To Live (TTL)
+iph->protocol = IPPROTO_TCP;  // Protocol (e.g., TCP)
+iph->check = 0;     // Checksum (set to 0 for now)
+iph->saddr = htonl(src_ip);  // Source address (set this)
+iph->daddr = htonl(dest_ip); // Destination address (set this)
+iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl); // Compute the checksum
+
+
+skb_push(skb, sizeof(struct iphdr)): This adjusts the sk_buff's data pointer, reserving space for the IPv4 header.
+
+ip_hdr(skb): This macro returns a pointer to the IPv4 header within the sk_buff structure.
+
+IPv4 header fields are then set (source and destination IP, TTL, protocol, etc.).
+
+After this, the sk_buff now contains:
+
+- The IPv4 header at the start of its data buffer.
+- The payload (e.g., TCP data) follows the IPv4 header.
+
+3️⃣ **When to Use skb_push() and skb_pull()**
+--------------------------------------------
+- **skb_push(skb, n)**: This function moves the data pointer forward by `n` bytes to make room for the header. It is used when the kernel needs to insert a header (like the IPv4 header).
+    - **`skb_push(skb, sizeof(struct iphdr))`** moves the data pointer forward by the size of the IPv4 header, so the header can be inserted at the start.
+- **skb_pull(skb, n)**: This function moves the data pointer back by `n` bytes and removes the first `n` bytes of data. It’s useful for stripping headers (e.g., when processing an incoming packet).
+
