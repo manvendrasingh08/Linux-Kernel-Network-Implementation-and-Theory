@@ -1,0 +1,252 @@
+===========================================
+              MTU and Fragmentation
+===========================================
+
+1. **MTU (Maximum Transmission Unit)**:
+   - MTU refers to the maximum size of a packet that can be sent through a network interface.
+   - For standard Ethernet networks, the typical MTU is **1500 bytes**.
+   - Some network interfaces support **Jumbo Frames**, allowing MTUs up to **9000 bytes**.
+   
+
+2. **Why MTU Matters**:
+   - When a packet exceeds the MTU, it must be broken into smaller chunks (fragments) to be transmitted.
+   - Fragmentation ensures that packets fit within the size limits of the network, preventing transmission issues.
+   
+
+3. **ip_fragment()**:
+   - The `ip_fragment()` function is responsible for **splitting a large packet** into smaller fragments if the packet size exceeds the MTU of the outgoing network device.
+   
+   **** SEE THE (9) IN THE FOLDER COMPLETE FLOW AND THEN RELATE IT WITH THE TX.
+   
+   TCP/UDP layer / upper layer 
+       │
+       ▼
+ip_queue_xmit()          <-- queues packet for IP output
+       │
+       ▼
+ip_output()              <-- top-level output function, starts the IP TX pipeline
+       │
+       ▼
+ip_finish_output()       <-- intermediate function, applies OUTPUT hooks and prepares packet
+       │
+       ▼
+ip_finish_output2()      <-- checks MTU and calls ip_fragment() if needed
+       │
+       ▼
+ip_fragment()            <-- performs actual fragmentation
+       │
+       ▼
+dev_queue_xmit()         <-- hands packet(s) to NIC driver
+
+   
+
+4. **ip_fragment() Function Prototype**:
+   ```c
+   int ip_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
+
+
+5. **Parameters of ip_fragment()**:
+
+   - **skb (struct sk_buff)**:
+     - The network packet (socket buffer) to be fragmented.
+
+   - **output (function pointer)**:
+     - A callback function used to send the packet after fragmentation.
+     - For example, it might use the `ip_finish_output2()` method.
+
+6. **Functionality of ip_fragment()**:
+
+   - **Fragmentation Handling**:
+     - When a packet is too large, the function breaks it into smaller fragments that are transmitted separately.
+
+   - **Fast Path**:
+     - If the packet is already fragmented (has a fragment list), the fast path is used to quickly send the fragments.
+
+   - **Slow Path**:
+     - If the packet isn't already fragmented, it goes through the slow path to be fragmented properly before transmission.
+     
+     
+     BOTH FAST PATH AND SLOW PATH ARE INDEPENDENT AND DIRECTLY SENDS THE PACKET TO NEXT STAGE. ITS WRONG TO SAY AFTER SLOW PATH FAST PATH FOLLOWS.
+     
+
+======
+
+>>>🛑️IP Fragmentation Process Overview
+====================================
+
+# Initial Packet (Before Fragmentation)
+===============================================
+
+	A packet (`skb`) is larger than the MTU has arrived.
+
+	Checking for Fragmentation:
+	----------------------------
+	skb_has_frag_list(skb) will return `false` because it's not fragmented yet.
+
+	The kernel enters the slow path to perform fragmentation:
+	--------------------------------------------------------
+	The kernel performs fragmentation and creates multiple fragments (`skb_2`, `skb_3`, etc.).
+
+# Fragmentation Process
+===============================
+
+	After fragmentation:
+	--------------------
+	- `skb->frag_list` points to the first fragment (`skb_2`).
+	- `skb_2->next` points to the next fragment (`skb_3`), and so on.
+
+	The kernel processes the entire chain of fragments:
+	---------------------------------------------------
+	The kernel follows the fast path for the fragments once the packet is fragmented.
+
+	Using `nr_frags` for Processing:
+	-------------------------------
+	The kernel will use the `nr_frags` value to know how many fragments it needs to process for this packet.
+
+# Processing Fragments
+=========================
+
+	Once fragmented, the kernel processes each fragment:
+	----------------------------------------
+	- Process `skb_2`, `skb_3`, etc., one by one.
+	- The kernel does not re-fragment `skb_2` or `skb_3`; instead, it processes them directly as part of the same fragmented packet.
+
+	No re-fragmentation occurs:
+	---------------------------
+	The fragments are processed as part of the same original packet. No additional fragmentation takes place.
+
+# Next Packet (New Fragmentation)
+==================================
+
+	For a different packet that needs fragmentation:
+	-----------------------------------------------
+	If a new packet (not part of the original chain) is too large, it will go through the same process:
+	- `skb_has_frag_list(new_skb)` will return `false` for the new packet.
+	- The kernel will enter the slow path and fragment the new packet.
+
+	Once the new packet is fragmented:
+	-----------------------------------
+	After fragmentation, the kernel follows the fast path for the fragments of that packet.
+
+	Processing the new fragments:
+	-----------------------------
+	The kernel follows the same procedure to process the fragments of the new packet:
+	- Process `new_skb_2`, `new_skb_3`, etc., as part of the new fragmented packet.
+===
+
+BELOW IS THE DETAILED THING ABOUT SLOW PATH AND FAST PATH
+=============================================================================
+
+>>DIFFERENCES:
+-----------------
+
+| Operation                                        | Slow Path | Fast Path                                      |
+| ------------------------------------------------ | --------- | ---------------------------------------------  |
+| Allocate new SKBs (`alloc_skb()`)                | ✔         | ❌                                             |
+| Reserve link-layer space (`skb_reserve()`)       | ✔         | ❌                                             |
+| Add header+payload space (`skb_put()`)           | ✔         | ❌                                             |
+| Copy IPv4 header (`skb_copy_from_linear_data()`) | ✔         | ❌**(copies header only from first fragment)** |
+| Copy payload (`skb_copy_bits()`)                 | ✔         | ❌                                             |
+| Rebuild fragments from scratch                   | ✔         | ❌                                             |
+
+
+
+>>WHAT FAST PATH DOES: 
+----------------------
+
+| Operation                                 | Fast Path                 |
+| ----------------------------------------- | ------------------------- |
+| Copies the IPv4 header onto each fragment | ✔ *(but no payload copy)* |
+| Adjusts fragment offsets                  | ✔                         |
+| Sets MF flag                              | ✔                         |
+| Updates tot_len                           | ✔                         |
+| Recalculates checksum                     | ✔                         |
+| Sends the fragment                        | ✔                         |
+
+
+===============================================
+          SLOW PATH FRAGMENTATION (IPv4)
+===============================================
+
+1. SETUP
+   - Extract IPv4 header:
+       iph = ip_hdr(skb)
+   - Determine remaining payload:
+       left = skb->len - hlen
+
+2. LOOP WHILE DATA REMAINS
+   while (left > 0)
+
+3. CALCULATE FRAGMENT SIZE
+   - Start with remaining data:
+       len = left
+   - Limit to MTU:
+       if (len > mtu)
+           len = mtu
+   - Align to 8-byte boundary (except last fragment):
+       len &= ~7
+
+4. ALLOCATE NEW SKB FOR FRAGMENT
+   - Allocate buffer:
+       skb2 = alloc_skb(len + hlen + ll_rs)
+   - If allocation fails:
+       return -ENOMEM
+
+5. COPY METADATA FROM ORIGINAL PACKET
+   - Copy pkt_type, priority, protocol, etc.:
+       ip_copy_metadata(skb2, skb)
+
+6. RESERVE SPACE AND PUT DATA
+   - Reserve link-layer header space:
+       skb_reserve(skb2, ll_rs)
+   - Mark header + payload area as valid:
+       skb_put(skb2, len + hlen)
+   - Set network header pointer:
+       skb_reset_network_header(skb2)
+
+7. COPY IP HEADER
+   - Copy original IP header into fragment:
+       skb_copy_from_linear_data(skb, skb_network_header(skb2), hlen)
+
+8. COPY PAYLOAD DATA
+   - Copy 'len' bytes from original packet:
+       skb_copy_bits(skb, ptr, skb_transport_header(skb2), len)
+   - Reduce remaining data:
+       left -= len
+
+9. SET FRAGMENT OFFSET
+   - Offset measured in 8-byte units:
+       iph->frag_off = htons(offset >> 3)
+
+10. HANDLE OPTIONS ONLY ON FIRST FRAGMENT
+   if (offset == 0)
+       ip_options_fragment(skb)
+
+11. SET IP_MF FLAG IF MORE FRAGMENTS FOLLOW
+   if (left > 0 || not_last_frag)
+       iph->frag_off |= htons(IP_MF)
+
+12. UPDATE POINTERS
+   ptr    += len
+   offset += len
+
+13. SET TOTAL LENGTH AND RECOMPUTE CHECKSUM
+   iph->tot_len = htons(len + hlen)
+   ip_send_check(iph)
+
+14. SEND THE FRAGMENT
+   err = output(skb2)
+   if (err) {
+       free buffers
+       increment IPSTATS_MIB_FRAGFAILS
+       return err
+   }
+   IP_INC_STATS(... FRAGCREATES)
+
+===============================================
+
+
+
+
+
+
