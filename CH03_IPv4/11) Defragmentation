@@ -1,0 +1,67 @@
+IPv4 Defragmentation Overview
+=============================
+
+1. What is Defragmentation?
+---------------------------
+- Reassembling all fragments of an IP packet into one complete packet.
+- All fragments share the same IP ID in the IPv4 header.
+
+2. Main Function for Defragmentation
+------------------------------------
+- Function: ip_defrag() (net/ipv4/ip_fragment.c)
+- Called from:
+    * ip_local_deliver() on packet arrival at host
+    * Firewalls (for inspection)
+    * IPVS (load balancing)
+
+3. Usage in ip_local_deliver()
+--------------------------------
+if (ip_is_fragment(ip_hdr(skb))) {
+    if (ip_defrag(skb, IP_DEFRAG_LOCAL_DELIVER))
+        return 0;
+}
+
+- ip_is_fragment() checks if the packet is fragmented.
+- If true → ip_defrag() is called.
+
+4. How to Check if a Packet is a Fragment
+-----------------------------------------
+static inline bool ip_is_fragment(const struct iphdr *iph)
+{
+    return (iph->frag_off & htons(IP_MF | IP_OFFSET)) != 0;
+}
+
+- Returns true if:
+    * IP_MF flag is set (more fragments follow)
+    * Fragment offset is not 0
+
+- Cases covered:
+    * First fragment → IP_MF set, offset 0
+    * Middle fragments → IP_MF set, offset non-zero
+    * Last fragment → IP_MF not set, offset non-zero
+
+5. How ip_defrag() Works (Step-by-Step)
+---------------------------------------
+
+a) Memory Cleanup
+   - Calls ip_evictor() to free old fragment memory if needed.
+
+b) Find or Create Reassembly Queue
+   - Uses ip_find() to locate an ipq object for this packet.
+   - If none exists → a new ipq is created.
+
+c) Add Fragment to Queue
+   - ip_frag_queue() adds the fragment to the linked list in order of fragment offset.
+
+d) Reassemble Packet
+   - When all fragments arrive → ip_frag_reasm() constructs the full packet.
+   - Stops reassembly timer via ipq_kill().
+
+e) Error Handling
+   - Packet size > 65535 → returns -E2BIG, updates IPSTATS_MIB_REASMFAILS
+   - Memory allocation failure → returns -ENOMEM, updates IPSTATS_MIB_REASMFAILS
+
+f) Timer Expiration
+   - If all fragments not received within default 30s (sudo cat /proc/sys/net/ipv4/ipfrag_time):
+       → ICMP “Time Exceeded” message sent
+
