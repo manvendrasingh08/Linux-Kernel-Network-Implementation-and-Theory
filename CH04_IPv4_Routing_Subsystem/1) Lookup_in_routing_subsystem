@@ -1,0 +1,376 @@
+In earlier versions of the Linux kernel (prior to 3.6), the routing lookup for each packet (in both Rx path and Tx path) was done in two phases:
+
+1. Routing cache lookup
+2. Routing table lookup (if a cache miss occurs)
+
+The fib_lookup() method is used to perform the actual lookup in the routing subsystem. Let’s go through the key concepts:
+
+fib_lookup() Method
+--------------------
+
+The fib_lookup() function is the core of the lookup process. It is responsible for finding the best routing entry for a packet in the routing subsystem.
+
+Prototype:
+----------
+
+int fib_lookup(struct net *net, const struct flowi4 *flp, struct fib_result *res);
+
+- net: 				This represents the network namespace.
+- flp (flowi4): 	This is the input parameter that contains information about the packet, such as the destination and source IP address,
+			 		Type of Service (TOS), etc.
+- res (fib_result): This is the output parameter where the result of the lookup is stored. The fib_result will contain various routing
+					parameters like the destination gateway, next-hop information, etc.
+
+flowi4 Object (Key to Routing Lookup)
+------------------------------------
+
+The flowi4 object holds key parameters used during the routing lookup. These include:
+
+		- Destination address
+		- Source address
+		- Type of Service (TOS)
+		- Protocol-related fields
+
+This object acts as a key for looking up entries in the routing tables.
+
+Important Note: Before performing a lookup, you need to initialize the flowi4 object to define what packet or flow you're working with.
+
+>>>For IPv6, there’s a parallel structure, flowi6, which functions similarly for IPv6 addresses.
+
+
+FIB Tables and Lookup Process
+-----------------------------
+
+	1. RIB (Routing Information Base)
+	---------------------------------
+	The RIB is the full routing database maintained by the kernel or routing daemon.
+	It contains all possible routes learned from various sources, such as:
+		- Static routes   : they are manually added by --->>  ip route add 192.168.1.0/24 via 192.168.0.1 i.e next hop for 192.168.1.0/24 is
+																																		192.168.1.0 
+		- Dynamic routing protocols (OSPF, BGP, RIP, etc.)
+		- Connected routes
+		- Kernel-added routes
+
+	Key points:
+		- The RIB stores *all* routes, even multiple routes for the same destination.
+		- The RIB does NOT directly forward packets.
+		- The RIB is used to compute the best route for each destination.
+		- The RIB may contain administrative information, metrics, and attributes.
+		- Routing daemons (like Quagga/FRR/BIRD) maintain the RIB.
+
+	Think of the RIB as:
+		"The big database of ALL known routes."
+
+	--------------------------------------------------------------
+
+	2. FIB (Forwarding Information Base)
+	------------------------------------
+	The FIB is the optimized routing table used by the kernel for actual packet forwarding.
+	It contains only the *best* route for each destination prefix.
+
+	Key points:
+		- The FIB is what the Linux kernel consults to forward every packet.
+		- It is built from the RIB, but contains only a single route per prefix.
+		- It is highly optimized for fast lookups.
+		- `fib_lookup()` performs lookups in the FIB.
+		- FIB entries include next-hop, interface, gateway, and cached data.
+
+	Think of the FIB as:
+		"The fast hardware-ready forwarding table used for real packet forwarding."
+
+	--------------------------------------------------------------
+
+	3. Relationship Between RIB and FIB
+	-----------------------------------
+		- Routing protocols populate the RIB.
+		- The kernel selects the best route for each destination.
+		- The best routes are installed into the FIB.
+		- The FIB is used on every packet lookup.
+
+	Example flow:
+		RIB (all routes) --> Best route selection --> FIB (forwarding table)
+
+	--------------------------------------------------------------
+	
+	
+	
+
+
+- Local FIB table: The lookup process first checks the local FIB (Forwarding Information Base) table to find a route.
+- Main FIB table: If no entry is found in the local FIB, the kernel checks the main FIB table.
+
+	>> Relationship Between Main and Local FIB
+	-----------------------------------------
+		
+		- **Local FIB**: Used for **local** or **namespace-specific** traffic.
+		
+		- **Main FIB**: Global routing table used for **external** and **non-local** traffic.		
+		
+		- The **Main FIB** handles traffic destined for other networks, while the **Local FIB** deals with traffic that stays within the local
+		 	machine or network namespace.
+		 	
+		- When the kernel performs routing, it first checks the **Local FIB** for local destinations. If no match is found, it checks the
+			 **Main FIB** for global routes.
+			 
+	
+	
+	>>>IF the lookup failed then the ip packet is sent to the the default gateway(0.0.0.0), a router, whose ip is preconfigured in the routong table as defualt route.
+
+
+	>>>Once a successful lookup is done, it generates a destination cache object (called dst_entry) and stores it in an rtable structure. This cache helps avoid repetitive lookups and speeds up the processing of future packets.
+
+fib_result Object
+-----------------
+
+After the fib_lookup() method successfully finds the route, it fills in a fib_result object with details about the route, including information like the next hop (gateway), interface to use, and more.
+
+The fib_result object is used to determine the path a packet will take when transmitted or received.
+
+
+Key Fields of fib_result:
+
+1. **prefixlen**:
+-----------------
+
+   - **What is it?**: The prefix length, which represents the network mask. It determines how much of the IP address should be matched against
+   					 the routing entry.
+   					 
+   - **Usage**: It helps the router identify the correct route based on the destination address. A smaller prefix (like `/24`) represents a
+   				 more specific match, while a larger prefix (like `/0`) represents a default or broad match.
+   				 
+   - **Example**: For the route `192.168.2.0/24`, the `prefixlen` is 24, which means the network part of the address is `192.168.2`.
+
+2. **nh_sel (Next-Hop Selector)**:
+---------------------------------
+
+   - **What is it?**: The next-hop selection number, which tells the router which next-hop to use when there are multiple possible next-hops
+   					 (in **Multipath Routing**).
+   - **Usage**: If there is only one next-hop, the `nh_sel` is set to 0. If there are multiple next-hops, the router will use this value to
+   				 choose the correct one.
+   - **Example**: For a multipath route, where there are multiple possible routes to a destination, `nh_sel` will point to the correct next
+   				-hop index in the routing entry.
+
+3. **type**:    *****IMPORTANT*****
+--------------
+
+   - **What is it?**: This field defines the action that should be taken based on the routing lookup result. The `type` field determines
+   					 whether the packet should be forwarded, delivered locally, or discarded later in the dst_entry.
+   					 
+   - **Important Types**:
+     - **RTN_UNICAST**: The packet should be forwarded to a gateway or directly to the destination (next-hop).
+     - **RTN_LOCAL**: The destination IP is for the local host; the packet should be delivered locally.
+     - **RTN_BROADCAST**: The packet is a broadcast and should be handled locally (e.g., sent to all devices on the local network).
+     - **RTN_MULTICAST**: The packet is multicast and should be forwarded to the appropriate multicast recipients.
+     - **RTN_UNREACHABLE**: The destination is unreachable; the router should send an ICMP "Destination Unreachable" message back to the sender.
+     
+   - **Usage**: This field guides the router on what action to take for the packet—whether it should forward the packet, deliver it locally, or send an error message.
+
+4. **fi (Pointer to fib_info)**:
+--------------------------------
+
+   - **What is it?**: A pointer to the `fib_info` structure, which holds detailed routing information for the route.
+   
+   - **Usage**: The `fib_info` structure contains data like the next-hop address (the router's IP), the interface to use, and other metadata
+   				 about the route.
+   				 
+   - **Example**: If the route points to a gateway at IP `192.168.1.1`, the `fib_info` would contain this next-hop information and direct the
+   				 packet towards that gateway.
+
+5. **table**:
+
+   - **What is it?**: A pointer to the FIB (Forwarding Information Base) table where the routing lookup was performed.
+   
+   - **Usage**: This field helps identify which FIB table the route lookup was done on. It is useful when there are multiple routing tables
+   				 (e.g., for policy-based routing).
+   
+   - **Example**: If the router has multiple routing tables for different types of traffic, the `table` field tells which specific table was
+   				 used to find the route.
+
+6. **fa_head (Pointer to fib_alias list)**:
+----------------------------------------------
+
+   - **What is it?**: A pointer to a list of `fib_alias` objects, which are used to optimize routing entries by grouping similar routes
+   					 together.
+   					 
+   - **Usage**: Instead of creating a separate `fib_info` object for each very similar route, `fib_alias` allows the grouping of similar
+   				 routes into one. This reduces memory usage and speeds up lookups.
+   				 
+   - **Example**: For routes with the same destination prefix but different TOS (Type of Service), the system can group them into a
+   				 `fib_alias` list.
+
+### Example of How the System Uses `fib_result`:
+===================================================
+
+1. **Routing Lookup**:
+-------------------------
+
+   - When a packet arrives at the router, the system performs a lookup using the destination IP address.
+   - The router searches its routing table for the best match.
+
+2. **Action Based on `fib_result`**:
+--------------------------------------
+
+   - If the lookup finds an exact match, the system will use the `fib_result` to decide how to process the packet.
+   - The router will determine the following based on the `fib_result`:
+   
+     - **Action**: Whether to deliver the packet locally (`RTN_LOCAL`), forward it (`RTN_UNICAST`), or discard it with an error message
+     	 (`RTN_UNREACHABLE`).
+     	 
+     - **Next-Hop**: The next-hop IP address (the gateway) to forward the packet if needed.
+     
+     - **Interface**: The network interface that should be used to send the packet to the next hop.
+   
+3. **Output Based on Type**:     *******>>>>>
+-----------------------------
+
+   - For **local delivery** (`RTN_LOCAL`), the packet is delivered to the local application.
+   
+   - For **unicast forwarding** (`RTN_UNICAST`), the packet is sent to the next-hop router or gateway.
+   
+   - For **broadcast or multicast** (`RTN_BROADCAST`, `RTN_MULTICAST`), the packet is forwarded to multiple devices or accepted as a broadcast
+   	 by the local host.
+   	 
+   - For **unreachable destinations** (`RTN_UNREACHABLE`), an ICMP message is sent back to the source to indicate the destination is unreachable.
+
+### Summary:
+
+- **`fib_result`** stores the result of a routing lookup and contains key information needed to handle a packet.
+- The **prefixlen** helps determine the network size.
+- The **type** tells the router how to treat the packet (forward, deliver locally, or send an error).
+- The **fi** field points to the actual route information, including the next-hop and other routing details.
+- The **table** field tells which FIB table was used.
+- **fa_head** is used for optimization when dealing with multiple similar routes.
+  
+The **`fib_result`** structure plays a crucial role in guiding the router's behavior in deciding the best way to forward or handle each incoming packet.
+
+===----===----===----
+
+
+
+## dst_entry 
+--------------------
+
+Once a lookup is successful, the dst_entry object is created on the by looking the dst_entry, which contains the route information, and this is embedded in the rtable structure.
+
+It holds input/output callbacks and other routing details such as :
+
+
+		-Next-hop IP address (i.e., the gateway for the route)
+
+		-Output interface (the network interface through which the packet should be sent)
+
+		-Callback functions for handling packet forwarding (input and output).
+
+				-dst_entry.input: The function that handles the reception of packets (input).
+
+				-dst_entry.output: The function used to send packets out (output).
+								   These callbacks are assigned based on the result of the routing lookup.
+
+rtable Structure
+----------------
+
+The rtable is a structure that represents a routing entry. It contains the following fields (among others):
+
+struct rtable {
+    struct dst_entry dst;        // The destination entry object (embedded)
+    int rt_genid;                // Routing table generation ID
+    unsigned int rt_flags;       // Flags for this route entry
+    __u16 rt_type;               // Type of route
+    __u8 rt_is_input;            // Is it an input route?
+    __u8 rt_uses_gateway;        // Does it use a gateway?
+    __be32 rt_gateway;           // The gateway (next hop) address
+    u32 rt_pmtu;                 // Path MTU
+    struct list_head rt_uncached;// Uncached list of routing entries
+};
+---------------------
+
+
+Key Fields in rtable:
+----------------------
+
+1. struct dst_entry dst:
+
+   - Purpose: Represents a destination cache that stores route-specific information such as the interface and next-hop IP address. Helps optimize routing by reducing repeated lookups.
+   - Use: Encapsulates necessary information about how packets should be forwarded after the routing lookup. Holds input/output callbacks for packet forwarding.
+   
+   - Fields:
+     - dst_entry.input: Function to handle incoming packets (Rx).
+     - dst_entry.output: Function to handle outgoing packets (Tx).
+
+2. int rt_genid:
+
+   - Purpose: Generation ID for the routing table entry.
+   - Use: Tracks changes to the routing table. Incremented when a new route is added or when the table is updated.
+   - Values: A monotonically increasing integer used to invalidate or refresh cached routes.
+
+3. unsigned int rt_flags:
+
+   - Purpose: Set of flags that describe the properties of the routing entry.
+   - Use: Contains flags that help the kernel manage special routing cases.
+   
+   - Values (Examples):
+     - RTCF_BROADCAST: Destination address is a broadcast address.
+     - RTCF_MULTICAST: Destination is a multicast address.
+     - RTCF_DOREDIRECT: Instructs to send ICMP Redirect message if applicable.
+     - RTCF_LOCAL: Destination address is local to the device.
+     - RTCF_REJECT: Marks route as rejected, packets will not be forwarded.
+
+4. __u16 rt_type:
+
+   - Purpose: Defines the type of the route.
+   - Use: Specifies the category or classification of the route.
+   
+   - Values:
+     - RTN_LOCAL: Local route (packets to a local network).
+     - RTN_UNICAST: Unicast route (packet forwarded to a gateway).
+     - RTN_MULTICAST: Multicast route (packet forwarded to a multicast address).
+     - RTN_BROADCAST: Broadcast route (packet forwarded to a broadcast address).
+
+5. __u8 rt_is_input:
+
+   - Purpose: Indicates whether the route is for incoming packets.
+   - Use: If set to 1, the route is used for incoming traffic (Rx path).
+   
+   - Values:
+     - 0: Route is not for input (for forwarding or outbound packets).
+     - 1: Route is for input (used to handle incoming traffic).
+
+6. __u8 rt_uses_gateway:
+
+   - Purpose: Indicates whether the route uses a gateway.
+   - Use: Distinguishes between routes requiring a gateway (next-hop router) and direct routes.
+   
+   - Values:
+     - 1: Route uses a gateway (next-hop IP is specified).
+     - 0: Route is direct (no gateway, destination is in the same network).
+
+7. int rt_iif:
+
+   - Purpose: Incoming interface index.
+   - Use: Indicates the interface index (ifindex) of the interface through which the packet entered the system.
+   
+   - Values:
+     - A positive integer representing the index of the interface (e.g., eth0, eth1).
+
+8. __be32 rt_gateway:
+
+   - Purpose: The IP address of the next-hop gateway (router).
+   - Use: Stores the next-hop gateway IP address to which the packet should be forwarded.
+   
+   - Values:
+     - An IPv4 address (e.g., 192.168.1.1) representing the next-hop gateway.
+     - In a local route, this field may contain the loopback address (127.0.0.1).
+
+9. u32 rt_pmtu:
+  
+   - Purpose: Path Maximum Transmission Unit (MTU).
+   - Use: Holds the smallest MTU along the path to the destination to avoid fragmentation.
+   
+   - Values:
+     - A positive integer representing the MTU size in bytes (e.g., 1500).
+
+10. struct list_head rt_uncached:
+  
+   - Purpose: A linked list for managing uncached routing entries.
+   - Use: Stores uncached routes to be recalculated or re-inserted into the routing table if needed.
+
