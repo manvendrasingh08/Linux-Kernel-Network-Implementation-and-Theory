@@ -1,0 +1,119 @@
+COMPLETE FLOW FOR lookup processes
+======================================
+======================================
+
+
+1. Call Hierarchy Leading to fib_lookup()
+
+   - A packet needs to be routed (either input or output) via the ip_route_input() or ip_route_output().
+
+   For incoming packets:
+   - ip_route_input() is called from the network layer to find the appropriate route for the incoming packet.
+   - It internally calls fib_lookup() to determine the routing entry that matches the destination address.
+
+   For outgoing packets:
+   - ip_route_output() is called to look up the route for the packet before sending it out.
+   - This also triggers fib_lookup() to get the correct route for the packet.
+
+
+2. Inside fib_lookup()
+
+   Once fib_lookup() is called, it performs several critical tasks to search for the correct route.
+
+   struct fib_result *fib_lookup(struct net *net, const struct flowi4 *flp, unsigned long fib_flags);
+
+   Parameters:
+   - net: The network namespace to which the packet belongs.
+   - flp: A structure that contains the packet's destination address and other information (e.g., source address, protocol).
+   - fib_flags: Flags that control the lookup process (e.g., whether to use the cache, etc.).
+
+   Inside fib_lookup():
+   - **Look up the Routing Table**:
+     - It first uses the FIB (Forwarding Information Base) to find the appropriate routing table for the packet. If you are not using policy routing, it uses the default table (RT_TABLE_MAIN).
+   
+   - **Access the FIB Table**:
+     - The kernel will check the routing table, which is represented by the fib_table structure.
+     - It uses the destination address (from flp->daddr) to match against the routes stored in the FIB table.
+   
+     struct fib_table *tb = fib_get_table(net, flp->flowi4_oif);
+
+   - **Use fib_trie for Lookup**:
+     - The routing entries are stored in a trie structure (fib_trie) within the fib_table.
+     - The trie is used to efficiently find the best match for the destination IP.
+
+   - **Match the Route**:
+     - The lookup will traverse the trie structure to find the longest matching prefix for the destination address (flp->daddr).
+
+   - **Check for Cached Entries**:
+     - If caching is enabled (which is typical), fib_lookup() may check for a cached route to avoid recalculating the route from scratch.
+
+   - **Return fib_result**:
+     - After finding the matching route, fib_lookup() will return a fib_result structure that contains the matching fib_info object. This object holds the details of the best matching route (including next-hop, network device, etc.).
+
+     struct fib_result result;
+
+     The fib_result object is used to store:
+     - The final destination entry (dst_entry) used for forwarding.
+     - The interface and next-hop information.
+
+
+3. fib_info and fib_result
+
+   The fib_info structure is the core data structure representing a single routing entry in the routing table.
+
+   Key Fields in fib_info:
+   - fib_dev: The network device (e.g., eth0, lo) through which the packet should be forwarded.
+   - fib_priority: The priority of the route. Lower values have higher priority.
+   - fib_nh[]: Array of next-hop information (if multiple nexthops are available).
+   - fib_protocol: Indicates the protocol (e.g., RTPROT_KERNEL, RTPROT_STATIC).
+   - fib_prefsrc: Preferred source address for the packet.
+   - fib_scope: The scope of the route (e.g., RT_SCOPE_UNIVERSE for global addresses).
+   - fib_flags: Flags associated with the route entry.
+   - fib_metrics[]: Metrics such as MTU, RTT, etc., related to the route.
+
+
+4. dst_entry and rtable
+
+   **dst_entry**:
+   - The dst_entry structure represents a destination entry that is used to describe how to reach a specific destination (or next-hop).
+   - When fib_lookup() finds a valid route, it creates a dst_entry structure from the fib_info and fills it with details like:
+     - The next-hop address (via fib_gateway).
+     - The network device (fib_dev).
+     - Path MTU (fib_pmtu).
+
+   **rtable**:
+   - The rtable (routing table entry) structure holds the final result of the lookup process.
+   - It is an abstraction that combines the routing entry (from fib_info) with additional details like the interface and next-hop. A rtable is essentially a wrapper around dst_entry that is used for more efficient forwarding.
+   - After the fib_info is found in the routing table, a rtable object is created that combines this information and provides the necessary details to send the packet to its destination.
+
+
+5. After dst_entry is Created
+
+   Once fib_lookup() has found the appropriate dst_entry and rtable, the flow proceeds with the packet being forwarded.
+
+   **Packet Forwarding**:
+   - The dst_entry is used by the network stack (e.g., in ip_forward()) to forward the packet to the next hop.
+   - The network device (via fib_dev) is used to determine the interface for forwarding.
+   - The next-hop address (via fib_gateway) is used to route the packet to the correct destination or gateway.
+   - Callback fucntions -- 
+   						
+   	f			for Rx    .input = ip_local_deliver or ip local forward.
+   							
+   				for tX	  .output = ip_local_out
+   							
+   
+   
+   **Updates**:
+   - After the packet is forwarded, the fib_result and dst_entry may be cached for later use, to avoid recalculating the route for the same destination repeatedly.
+
+   **Route Metrics**:
+   - The route metrics (such as MTU and RTT) stored in fib_metrics[] may be used to adjust forwarding behavior, such as MTU discovery or path selection.
+
+
+6. Final Outcome
+
+   The final outcome of the fib_lookup() process is that:
+   - A rtable is returned, which represents the best route for the packet.
+   - The packet is forwarded to the next-hop (via the appropriate device) based on the information found in dst_entry.
+   - If the route is valid, the packet is forwarded; if not, it may be dropped or handled with an error (e.g., ICMP destination unreachable).
+
