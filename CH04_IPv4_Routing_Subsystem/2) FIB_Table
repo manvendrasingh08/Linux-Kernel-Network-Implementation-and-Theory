@@ -1,0 +1,121 @@
+struct fib_table {
+    struct hlist_node    tb_hlist;       // Linked list node for table chaining
+    u32                  tb_id;          // Table identifier (254 for the main table, 255 for the local table)
+    int                  tb_num_default; // Number of default routes in this table. Multiple default routes for load balancing in busy system
+    int                  tb_data[0];     // Placeholder for a routing entry (trie object)
+};
+
+
+There are different fib tables that stores different routing info. Now there is many fib tables so how to find the fib table that we need ?
+We search the hash tabkle of fib tables on the basis if prorotcols like IPv4 or IPv6, using prefiux key that match the destination ip upto 24 bits or so.
+
+tb_data[0]: 
+------------
+
+>>This is a placeholder for the trie object (or a similar structure) that stores the actual routing entries. The FIB trie structure is used to efficiently store and lookup routes. This placeholder is used because the size of the trie structure may vary, and the structure is dynamically allocated.
+
+>>It holds fib_info objects that are very important for the making routing decisions. When we add routes to the kernel routing table (either via **ip route** or dynamically by the kernel), each route gets represented as a fib_info object. These fib_info objects are stored in the tb_data array.
+
+
+fib_info
+===========
+
+The fib_info structure holds all the important information for a single routing entry, such as the next-hop IP address, the network device, the routing protocol, and various metrics. It allows the kernel to efficiently determine how to forward packets based on the destination. The fields in the structure help define properties like route priority, scope, and the number of next hops, and it also provides support for advanced features like Multipath Routing.
+
+The info it stores in its fields: 
+
+1. Routing Protocol Information:
+   1.1 fib_protocol: Identifies the routing protocol used to install the route (e.g., RTPROT_KERNEL, RTPROT_STATIC, RTPROT_BOOT, etc.).
+
+2. Next-Hop Information:
+   2.1 fib_nh[]: Array of next-hop information (fib_nh objects), each specifying the next hop’s IP address and the network device to use.
+   2.2 fib_dev: The network device used to reach the next hop.
+
+3. Route Properties:
+   3.1 fib_priority: The priority of the route (lower value means higher priority).
+   3.2 fib_type: Type of the route (e.g., RTN_UNICAST, RTN_PROHIBIT).
+   3.3 fib_flags: Various flags indicating route properties (e.g., route is a blackhole, etc.).
+
+4. Source Address:
+   4.1 fib_prefsrc: Preferred source address for outgoing packets matching this route.
+
+5. Route Metrics:
+   5.1 fib_metrics[]: Array of metrics related to the route (e.g., MTU, RTT, window size, MSS, etc.).
+   5.2 fib_mtu: Maximum Transmission Unit for this route.
+   5.3 fib_rtt: Round-trip time (RTT) for this route.
+
+6. Route Scope:
+   6.1 fib_scope: Scope of the route (e.g., RT_SCOPE_UNIVERSE, RT_SCOPE_HOST).
+
+7. Route Lifetime and Reference Counting:
+   7.1 fib_treeref: Reference count for how many alias objects are using this route.
+   7.2 fib_clntref: Reference count for how many clients (e.g., userspace processes) are using this route.
+   7.3 fib_dead: Flag indicating whether the route is dead and can be freed.
+
+8. Network Namespace:
+   8.1 fib_net: Points to the network namespace to which this route belongs (important for multi-namespace systems).
+
+9. Multipath Routing:
+   9.1 fib_nhs: Number of next-hop routes (used when Multipath Routing is enabled).
+   
+   
+   
+Policy Routing and Multiple Routing Tables
+===============================================
+
+
+
+In Linux, policy routing allows you to create and manage multiple routing tables, and the number of routing tables is not strictly limited to the default main and local tables. The ip route command allows you to configure additional routing tables based on different policies.
+
+Default Routing Tables: Without policy routing, there are typically two main routing tables in use:
+
+		Main Table (RT_TABLE_MAIN): Table with index 254.
+
+		Local Table (RT_TABLE_LOCAL): Table with index 255.
+		
+
+With policy routing, you can define multiple routing tables, and the total number is determined by how many policy rules you configure.
+
+		***	TO SEE ROUTING POLICIES >>>>>>>>   ip rule show
+		
+		*** TO SEE ROUTING TABLES   >>>>>>>> FOR *main* table  >>>>> ip route show table main
+											 FOR *local* table >>>>> ip route show table local
+											 FOR all tables >>>>> ip route show table all
+
+
+These tables are created at boot time and are always present.
+
+Policy Routing: When policy routing is enabled (via ip rule add), you can create additional routing tables, and the number of tables can grow dynamically based on the policies you configure.
+
+		# Source Address-Based Routing (From Policy):
+		---------------------------------------------------
+		
+		# Routing decisions are made based on the source IP address of the packet.
+		# Example Policy: "Route traffic from 192.168.1.0/24 using routing table 100."
+
+		ip rule add from 192.168.1.0/24 table 100
+
+
+		# Destination Address-Based Routing (To Policy):
+		----------------------------------------------------
+		
+		# Routing decisions are based on the destination IP address.
+		# Example Policy: "Route traffic destined for 10.10.10.0/24 using routing table 200."
+
+		ip rule add to 10.10.10.0/24 table 200
+
+
+		# Interface-Based Routing (Incoming/Outgoing Interface Policy):
+		------------------------------------------------------------------
+		
+		# Routing is determined by the incoming interface (iif) or outgoing interface (oif) the packet arrives or exits through.
+		# Example Policy: "Route traffic that arrives on eth0 using routing table 300."
+
+		ip rule add iif eth0 table 300
+		
+
+
+
+
+
+
