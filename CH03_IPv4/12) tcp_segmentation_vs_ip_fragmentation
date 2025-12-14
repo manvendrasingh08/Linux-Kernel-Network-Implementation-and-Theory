@@ -1,0 +1,105 @@
+# TCP Segmentation and IP Fragmentation
+
+### Scenario: Application Sends 6000 Bytes of Data
+
+1. **Application Layer (Layer 7)** sends 6000 bytes of data.
+2. The **TCP Layer (Layer 4)** receives the data and prepares to transmit it across the network.
+
+---
+
+### Step 1: **TCP Segmentation (Layer 4)**
+
+- **TCP Segmentation** occurs when the data being sent from the application layer is too large to be transmitted as a single **TCP segment**.
+- **Maximum Segment Size (MSS)** of TCP is the largest amount of data that can be sent in one TCP segment. Let’s assume the MSS is 3000 bytes.
+
+**Process**:
+- Since the application data is 6000 bytes and the MSS is 3000 bytes, the TCP layer **splits the 6000-byte data** into **two segments**:
+  - **Segment 1**: 3000 bytes of application data + TCP header.
+  - **Segment 2**: 3000 bytes of application data + TCP header.
+
+**Result**:
+- The TCP layer breaks the 6000 bytes into two **3000-byte segments** (excluding the TCP header).
+  
+---
+
+### Step 2: **Encapsulation into IP Packets (Layer 3)**
+
+- Once the **TCP segments** are created, the **Network Layer (Layer 3)** will encapsulate each **TCP segment** into an **IP packet** for transmission.
+- **IP packets** carry the TCP segment as part of the **data payload**.
+
+---
+
+### Step 3: **IP Fragmentation (Layer 3)**
+
+- The network's **Maximum Transmission Unit (MTU)** is typically 1500 bytes (commonly used for Ethernet networks). This means that no single **IP packet** can exceed 1500 bytes.
+- Each **TCP segment** that was created in Step 1 (3000 bytes) is **too large** to fit within the MTU of 1500 bytes, so the **IP layer** needs to **fragment** these IP packets to fit the network's MTU.
+
+**Process**:
+- The IP layer fragments each 3000-byte **TCP segment** into smaller **IP fragments**.
+- Each **IP fragment** can hold 1460 bytes of **TCP data** (including the IP header and TCP header), and the remaining bytes are placed in additional fragments.
+  
+**For Example:**
+
+- **Segment 1 (3000 bytes)** is fragmented into:
+  - **Fragment 1**: 1460 bytes of data + IP header.
+  - **Fragment 2**: 1460 bytes of data + IP header.
+  - **Fragment 3**: Remaining 80 bytes of data + IP header.
+
+- **Segment 2 (3000 bytes)** is fragmented similarly:
+  - **Fragment 1**: 1460 bytes of data + IP header.
+  - **Fragment 2**: 1460 bytes of data + IP header.
+  - **Fragment 3**: Remaining 80 bytes of data + IP header.
+
+**Result**:
+- The **IP layer** creates multiple fragments for each 3000-byte TCP segment to fit the MTU of 1500 bytes.
+
+---
+
+### Step 4: **Transmission of Fragments**
+
+- Each of the **IP fragments** is transmitted across the network. These fragments may even travel through different network paths (due to routing) before reaching the destination.
+- Since fragmentation happens at the IP layer, the fragments are treated as **independent packets** by lower layers (like the Data Link layer).
+
+---
+
+### Step 5: **Reassembly of Fragments**
+
+- At the **destination**, the **IP layer** at the receiver's end will **reassemble the fragments** into the original IP packets.
+- After reassembling the IP packets, the **TCP layer** will then reassemble the original 3000-byte **TCP segments** based on the **sequence numbers** in the TCP headers.
+
+**Result**:
+- The receiver gets the original 6000-byte data back, in the correct order, and can pass it up to the application layer.
+
+---
+
+### Summary:
+
+1. **Application Layer** sends 6000 bytes of data.
+2. **TCP Segmentation** (Layer 4):
+   - Data is split into two 3000-byte TCP segments, based on the MSS (3000 bytes).
+3. **Encapsulation** into IP packets:
+   - Each TCP segment is encapsulated into an IP packet.
+4. **IP Fragmentation** (Layer 3):
+   - Each 3000-byte TCP segment is fragmented into multiple smaller IP fragments (1460 bytes per fragment, due to the MTU of 1500 bytes).
+5. **Transmission** happens over the network.
+6. **Reassembly** at the receiver:
+   - The IP layer reassembles the fragments.
+   - The TCP layer reassembles the segments, resulting in the original 6000 bytes of application data being received by the destination.
+
+---
+
+### Why Segmentation and Fragmentation Are Needed:
+
+- **Segmentation** (at the **TCP layer**) is needed because large application data must be divided into **manageable TCP segments** that can be reliably transmitted across the network.
+- **Fragmentation** (at the **IP layer**) is required because the **IP packets** containing these TCP segments may be too large to fit within the **MTU** of the underlying network (e.g., 1500 bytes for Ethernet), and thus must be broken down into smaller fragments.
+
+---
+
+### Key Concepts:
+
+- **MSS (Maximum Segment Size)**: Determines the maximum size of data that TCP can send in one segment.
+- **MTU (Maximum Transmission Unit)**: The maximum size of an IP packet that can be transmitted across a network. It often determines the need for fragmentation at the IP layer.
+- **Segmentation**: Splitting large application data into smaller TCP segments for reliable transmission at Layer 4.
+- **Fragmentation**: Breaking down large IP packets into smaller fragments to fit within the MTU limit at Layer 3.
+
+
