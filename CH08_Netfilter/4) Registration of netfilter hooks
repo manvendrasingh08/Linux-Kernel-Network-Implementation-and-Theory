@@ -1,0 +1,61 @@
+1. Registration of Netfilter Hooks
+===================================
+
+To register a hook callback at one of the five hook points mentioned earlier, you first define an `nf_hook_ops` object (or an array of `nf_hook_ops` objects) and then register it. The `nf_hook_ops` structure is defined in `include/linux/netfilter.h`:
+
+struct nf_hook_ops {
+    struct list_head list;          // Linked list for hooks
+    /* User fills in from here down. */
+    nf_hookfn *hook;                // Hook callback function
+    struct module *owner;           // Module that owns this hook
+    u_int8_t pf;                    // Protocol family (IPv4, IPv6, etc.)
+    unsigned int hooknum;           // Hook number (one of the five hook points)
+    int priority;                   // Hook callback priority (lower priority is called first)
+};
+
+### Key Members of `nf_hook_ops`:
+-----------------------------------
+
+- **hook**:  
+  This is the callback function you want to register for the hook. Its prototype is:
+
+unsigned int nf_hookfn(unsigned int hooknum,
+                        struct sk_buff *skb,
+                        const struct net_device *in,
+                        const struct net_device *out,
+                        int (*okfn)(struct sk_buff *));
+
+- **pf**:  
+  This represents the protocol family. For example:
+  - `NFPROTO_IPV4` for IPv4.
+  - `NFPROTO_IPV6` for IPv6.
+
+- **hooknum**:  
+  This is one of the five netfilter hook points where the callback should be registered.
+
+- **priority**:  
+  This determines the order in which the hook callbacks are called when there are multiple hooks registered on the same hook point. Hooks with lower priority values are called first.  
+  The `nf_ip_hook_priorities` enum defines the possible values for IPv4 hook priorities (defined in `include/uapi/linux/netfilter_ipv4.h`).
+
+### Two Methods for Hook Registration:
+--------------------------------------
+
+- **Register a single hook**:  
+  Use the function `nf_register_hook()` to register a single `nf_hook_ops` object.
+
+int nf_register_hook(struct nf_hook_ops *reg);
+
+- **Register an array of hooks**:  
+  Use `nf_register_hooks()` to register an array of `nf_hook_ops` objects.
+
+int nf_register_hooks(struct nf_hook_ops *reg, unsigned int n);
+
+The second parameter `n` specifies the number of elements in the array.
+
+### Example: Registering Hooks with Priorities
+---------------------------------------------
+
+When registering multiple hook callbacks on the same hook point, the `priority` field is crucial. Hooks with lower priority numbers are called first, so you can control the order of execution by assigning different priority values.
+
+You will see examples of registering an array of `nf_hook_ops` objects in the next sections. These examples will demonstrate how priorities affect the order in which callbacks are triggered at each hook point.
+
