@@ -1,0 +1,195 @@
+
+
+The main point to understand the complete flow is  >>>>>>>>>>> "4. How Packets Traverse the Network Stack with Netfilter Hooks"
+
+
+5 main callbacks (hook points) for packet processing in Netfilter:
+--------------------------------------------------------------------
+
+1. NF_INET_PRE_ROUTING
+
+	Purpose: This hook is called when a packet is received by the kernel before routing.
+
+	Use Case: It's typically used for filtering incoming packets before they are passed to the routing decision process. This can be used for
+			 firewall rules that inspect incoming packets before routing them to their destination.
+
+	Example: Filtering or modifying packets before they are processed by routing decisions.
+	
+	
+
+2. NF_INET_LOCAL_IN
+
+	Purpose: This hook is called when a packet is destined for the local system (i.e., the packet has already been routed to the machine and is
+			 being processed by the local IP stack).
+
+	Use Case: It's commonly used for filtering packets destined for the local machine itself, such as for firewall rules or local access
+				control.
+
+	Example: Dropping or modifying packets that are directed at local ports.
+	
+
+3. NF_INET_FORWARD
+
+	Purpose: This hook is invoked for packets that are being forwarded through the system (i.e., packets that are not destined for the local
+			 system, but are passing through it on their way to another destination).
+
+	Use Case: It's used for filtering packets that are being forwarded by a router, such as controlling the traffic between different network
+			 segments.
+
+	Example: Applying firewall rules to control forwarding traffic.
+
+4. NF_INET_LOCAL_OUT
+
+	Purpose: This hook is called when a packet is being sent from the local system to an external destination.
+
+	Use Case: This is useful for modifying or filtering packets that are being sent out of the system, such as for controlling outgoing traffic
+			 or applying NAT.
+
+	Example: Modifying source IP addresses (SNAT) or applying additional filtering rules for outgoing packets.
+
+5. NF_INET_POST_ROUTING
+
+	Purpose: This hook is called when a packet has been routed, and is about to leave the system (just before it's sent out on the network
+			 interface).
+
+	Use Case: This is the last chance to modify or filter packets before they leave the system. It's often used for Source NAT (SNAT) or for
+			 final packet modifications before they are transmitted.
+
+	Example: SNAT, altering outgoing packets' IP addresses or ports before they are transmitted on the network.
+
+
+
+>>>>>>	2. Role of NF_HOOK Macro
+----------------------------------------------
+
+NF_HOOK() is the macro that actually invokes the registered callback functions at these hook points.
+
+It takes care of:
+
+Checking whether any callback is registered for the specific hook.
+
+Invoking the callback if it is registered.
+
+Passing the relevant packet data (like the skb buffer, the network interface, and state information) to the callback.
+
+
+
+>>>>>>>>  3. Verdicts in Netfilter
+----------------------------------------
+
+Each callback function has the ability to decide what happens to the packet next. This decision is called the verdict and it can be one of the following:
+
+NF_ACCEPT: This verdict indicates that the packet should continue its traversal through the network stack (i.e., the packet is accepted and processed further).
+
+NF_DROP: This verdict tells the kernel to discard the packet and prevent it from being processed further.
+
+NF_STOLEN: This verdict indicates that the packet has been taken by the callback and no further processing is needed.
+
+NF_QUEUE: This verdict places the packet into a queue for further processing (usually by userspace).
+
+So, when a packet reaches a Netfilter hook, the callback function evaluates the packet and returns a verdict that determines the packet's fate (whether it gets accepted, dropped, or processed further).
+
+
+>>>>>>  4. How Packets Traverse the Network Stack with Netfilter Hooks
+----------------------------------------------------------------------------
+
+    Let’s walk through the packet processing flow and see how Netfilter hooks and NF_HOOK are involved:
+
+    4.1 Packet Arrival (Before Routing)
+
+        - When a packet arrives at the kernel (either from the network interface or generated locally),
+          it starts its journey through the kernel's networking stack.
+
+        - Netfilter Hook 1: NF_INET_PRE_ROUTING:
+
+            - The first hook that the packet encounters is NF_INET_PRE_ROUTING. This occurs before routing is performed.
+
+            - Here, a Netfilter callback function may be registered to inspect or modify the packet.
+
+            - Example action: A firewall rule could drop packets from a specific IP address here.
+
+    4.2 Routing Lookup
+
+        - After passing through the NF_INET_PRE_ROUTING hook, the kernel performs a routing lookup
+          to determine where the packet is going.
+
+        - Routing decision: The routing table is consulted, and the packet is either forwarded (if it's for another destination)
+          or handled locally (if it’s for the local system).
+
+    4.3 Packet Handling Depending on Routing Decision
+
+        - If the packet is destined for the local system:
+
+            - Netfilter Hook 2: NF_INET_LOCAL_IN:
+
+                - If the packet is directed to the local system, it reaches the NF_INET_LOCAL_IN hook.
+
+                - A callback registered at this hook can inspect, modify, or drop the packet based on rules like local firewall policies.
+
+        - If the packet is being forwarded:
+
+            - Netfilter Hook 3: NF_INET_FORWARD:
+
+                - If the packet is being forwarded (i.e., it’s passing through the system), it reaches the NF_INET_FORWARD hook.
+
+                - A callback here might filter out unwanted forwarded packets or apply NAT.
+
+    4.4 Packet Sent from Local System
+
+        - Netfilter Hook 4: NF_INET_LOCAL_OUT:
+
+            - If the packet is originating from the local system, it hits the NF_INET_LOCAL_OUT hook.
+
+            - Here, callbacks could modify or filter outgoing packets, for example, applying Source NAT (SNAT) to outgoing packets.
+
+    4.5 Post-Routing (Final Stage)
+
+        - Netfilter Hook 5: NF_INET_POST_ROUTING:
+
+            - Finally, before the packet leaves the system (whether forwarded or local), it passes through NF_INET_POST_ROUTING.
+
+            - A callback here could apply final modifications or checks, like applying Destination NAT (DNAT) or logging the packet.
+
+5. Registering and Invoking Callbacks Using nf_register_hook() and NF_HOOK()
+
+    Now, let’s understand how callbacks are registered and how NF_HOOK() fits into this process.
+
+    5.1 Callback Registration with nf_register_hook()
+
+        - Netfilter modules register their callbacks at specific hook points using the nf_register_hook() function
+          (or nf_register_hooks() for multiple hooks). This happens typically in the module's initialization function.
+
+            Example:
+            
+            ```c
+            static int my_hook_fn(void *priv, struct sk_buff *skb, const struct nf_hook_state *state) {
+                pr_info("Packet handled by my hook\n");
+                return NF_ACCEPT;  // Accept the packet
+            }
+
+            static struct nf_hook_ops my_nf_hook_ops = {
+                .hook = my_hook_fn,               // The callback function
+                .pf = PF_INET,                    // Protocol family (IPv4)
+                .hooknum = NF_INET_PRE_ROUTING,   // The hook point (before routing)
+                .priority = NF_IP_PRI_FIRST,      // Priority (higher means earlier)
+            };
+
+            // Register the callback during module initialization
+            static int __init my_init(void) {
+                return nf_register_hook(&my_nf_hook_ops);
+            }
+
+            static void __exit my_exit(void) {
+                nf_unregister_hook(&my_nf_hook_ops);  // Unregister the callback on module removal
+            }
+
+            module_init(my_init);
+            module_exit(my_exit);
+            ```
+
+        - In this example, `my_hook_fn()` is the callback that will be called when packets hit the **`NF_INET_PRE_ROUTING`** hook.
+
+        - `nf_register_hook(&my_nf_hook_ops)` registers the callback function with the Netfilter framework.
+
+        - `NF_HOOK()` is then invoked in the kernel's networking code at the appropriate hook points (like **`NF_INET_PRE_ROUTING`**), invoking `my_hook_fn()` for processing the packet.
+
