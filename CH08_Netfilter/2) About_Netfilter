@@ -1,0 +1,64 @@
+1. What is Netfilter?
+======================
+
+Netfilter is a framework in the Linux kernel that is used for managing network traffic. It allows the kernel to inspect and modify network packets. This helps with tasks like:
+
+- **Packet selection**: Choosing specific packets to act upon.
+- **Packet filtering**: Deciding whether to allow or block certain network traffic.
+- **Network Address Translation (NAT)**: Modifying the source or destination IP address of packets.
+- **Packet mangling**: Changing the contents of a packet, often for security or optimization purposes.
+- **Connection tracking**: Keeping track of the state of network connections.
+- **Gathering network statistics**: Collecting data about the network traffic for monitoring or analysis.
+
+2. Core Functionalities of Netfilter:
+======================================
+
+Netfilter provides several key functions:
+
+- **Packet Selection**: 
+  - Netfilter helps choose which packets should be examined or acted upon. It looks at incoming or outgoing packets and decides which ones to keep, block, or modify based on rules set by the administrator.
+
+- **Packet Filtering**: 
+  - This is one of the most common uses of Netfilter. It refers to setting rules for allowing or blocking network traffic based on specific conditions, such as IP address, port, or protocol type. It’s the core of most firewall setups in Linux.
+
+- **Network Address Translation (NAT)**: 
+  - NAT allows for modifying the source or destination IP address of packets. This is particularly useful for scenarios like:
+    - **Masquerading**: Allowing multiple devices inside a private network to share one public IP address.
+    - **Port forwarding**: Forwarding specific network traffic to a different machine on the network.
+
+- **Packet Mangling**: 
+  - This refers to modifying the packet headers in some way before or after routing. This could include things like changing TTL (Time-to-Live), altering packet priority, or doing more advanced modifications.
+
+- **Connection Tracking**: 
+  - Netfilter helps in tracking the state of connections. This means it keeps track of whether a packet is part of an established connection or whether it's a new connection. This is important for functions like stateful firewalls (which track whether traffic is part of an open connection) or load balancing.
+
+- **Network Statistics**: 
+  - Netfilter can also gather statistics about the network traffic that passes through it, which is useful for monitoring and diagnostics.
+
+3. Common Frameworks Based on Netfilter:
+========================================
+
+There are a few important frameworks built on top of Netfilter in the Linux kernel. These frameworks extend the capabilities of Netfilter and help in specific tasks:
+
+- **IPVS (IP Virtual Server)**:
+
+  - This is a solution for load balancing network traffic at the transport layer (Layer 4). It’s typically used to distribute incoming network traffic across multiple servers to balance the load. For example, if you have a web application, you can use IPVS to send different requests to different servers based on load.
+  - **IPv4 and IPv6 Support**: 
+    - IPVS started with support for IPv4, and as of Linux kernel version 2.6.28, it also supports IPv6.
+
+- **IP Sets**:
+
+  - This framework allows you to group IP addresses into sets, making it easier to manage and apply network rules to multiple addresses at once. For instance, instead of writing individual rules for each IP, you can group them in an IP set and apply the rule to the set.
+  - **ipset** is the user-space tool used to manage these sets. The kernel part is found in the `/net/netfilter/ipset` directory.
+
+- **Iptables**:
+
+  - This is the most popular Linux firewall tool and the user interface for interacting with the Netfilter subsystem. It lets you set up and manage rules for network traffic filtering, network address translation, and other tasks. It has different implementations for different protocols:
+    - **iptables** for IPv4
+    - **ip6tables** for IPv6
+    - **arptables** for ARP (Address Resolution Protocol)
+    - **ebtables** for Ethernet-level traffic
+
+- **Iptables Commands**:
+  - You use commands like `iptables` (for IPv4) or `ip6tables` (for IPv6) to interact with the Netfilter rules. For example, you can use these commands to block specific IPs or open ports. These tools use the `setsockopt()` and `getsockopt()` system calls to communicate with the kernel.
+
