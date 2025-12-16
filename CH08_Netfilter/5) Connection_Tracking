@@ -1,0 +1,96 @@
+# Connection Tracking Overview
+
+Connection Tracking is a core component of Netfilter, which allows the Linux kernel to track the state of network connections. This is important for tasks like NAT (Network Address Translation), firewall filtering, and more advanced stateful packet filtering. Connection Tracking enables the system to track not just the raw packets but also the state of each connection (e.g., NEW, ESTABLISHED, RELATED). This enables efficient decision-making for packet filtering, routing, and forwarding.
+
+# Key Concepts of Connection Tracking
+
+## Connection Tracking Table:
+The kernel maintains a Connection Tracking table, where it stores information about active connections.
+
+Each connection is represented by an nf_conn structure, which contains:
+- ct_general: Reference count for the connection.
+- tuplehash: Contains original and reply tuples for each direction of traffic.
+- status: Connection state (e.g., NEW, ESTABLISHED).
+- timeout: Connection expiration timer.
+- master: Used for connections that are related (e.g., in protocols like FTP).
+- proto: Stores protocol-specific information for tracking.
+
+## Connection States:
+The state of a connection is crucial for tracking and filtering.
+- NEW: A new connection is being established.
+- ESTABLISHED: The connection is fully established.
+- RELATED: The connection is related to an existing connection (e.g., FTP data channel).
+- INVALID: Invalid or erroneous connections.
+
+## Tuples:
+A tuple is a 5-tuple, consisting of:
+- Source IP, Source Port
+- Destination IP, Destination Port
+- Protocol (TCP, UDP, ICMP, etc.)
+
+tuplehash[0] is for the original direction (client to server), and tuplehash[1] is for the reply direction (server to client).
+
+## Timeouts:
+Connection tracking also involves timeouts, where inactive connections are expired after a specified period.
+- TCP, UDP, and other protocols have different timeout values.
+
+# Flow of Connection Tracking
+
+## When a Packet Arrives:
+Netfilter Hooks are responsible for invoking connection tracking methods at various stages.
+- Pre-routing (NF_INET_PRE_ROUTING): Connection tracking for incoming packets.
+- Post-routing (NF_INET_POST_ROUTING): Connection tracking for outgoing packets.
+- Local-in (NF_INET_LOCAL_IN) & Local-out (NF_INET_LOCAL_OUT): For traffic going in and out of the local machine.
+
+## Checking for Existing Connection:
+When a new packet arrives, the kernel checks the Connection Tracking table to see if a matching connection already exists (based on the 5-tuple).
+- If no match is found, the system will create a new nf_conn entry and start tracking it.
+- If a match is found, the system checks the connection state and updates it accordingly (NEW, ESTABLISHED, etc.).
+
+## Handling Related Connections (Helper Modules):
+Some protocols, like FTP or SIP, have control and data channels that need to be tracked separately.
+
+Connection Tracking Helpers extend the functionality of Connection Tracking to handle such cases. For example, the FTP Helper listens for the FTP commands and dynamically opens new ports for data connections.
+
+When a protocol like FTP or SIP expects a new connection (e.g., a dynamic port for data transfer), the kernel creates an expectation (nf_conntrack_expect) that specifies the expected connection parameters.
+
+## Timeout and Cleanup:
+If a connection is idle for too long, the kernel will remove it from the Connection Tracking table, marking it as expired.
+- Each nf_conn has a timeout timer. If there is no traffic associated with a connection for a specific duration, it is removed from the table.
+
+# Key Functions in Connection Tracking
+
+## nf_conntrack_in():
+This function is invoked when a packet arrives to be processed for connection tracking.
+- It checks if the connection can be tracked for the specific protocol (L3 and L4).
+- It looks up an existing connection or creates a new one if needed.
+
+## resolve_normal_ct():
+This function resolves the connection tuple and looks up the Connection Tracking table.
+- If no connection is found, it creates a new nf_conn entry.
+- It also sets timeouts and triggers protocol-specific packet handling.
+
+## nf_ct_expect_init():
+Used by Connection Tracking Helpers to create expectations (i.e., anticipate a related connection).
+- For protocols like FTP, it creates a connection expectation that the kernel should expect a new connection based on the data channel established by the control connection.
+
+# Connection Tracking Helpers and Expectations
+
+## Why Needed?:
+Protocols like FTP or SIP use control channels to negotiate data connections, which are dynamically created. Connection Tracking Helpers allow Netfilter to track these related connections.
+
+## How It Works:
+- Helper Modules (e.g., FTP, SIP) detect control traffic and set up expectations for related data traffic.
+- An expectation is a set of conditions that tells the kernel to expect a connection that matches certain parameters (e.g., an FTP data connection on a dynamic port).
+- Helper Functions monitor and update the connection state for related connections.
+
+# Use Cases
+
+## NAT (Network Address Translation):
+Connection Tracking is essential for NAT, where the kernel modifies the source/destination IP addresses and ports for packets. It tracks the original connection and ensures proper routing for return packets.
+
+## Stateful Firewalls:
+Stateful firewalls can use Connection Tracking to filter packets based on their connection state (NEW, ESTABLISHED, RELATED, INVALID). For example, an iptables rule could accept only ESTABLISHED connections while dropping NEW ones:
+```bash
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED -j ACCEPT
+
