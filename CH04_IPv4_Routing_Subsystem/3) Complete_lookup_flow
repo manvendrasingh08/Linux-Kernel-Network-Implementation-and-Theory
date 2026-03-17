@@ -99,7 +99,7 @@ COMPLETE FLOW FOR lookup processes
    						
    	f			for Rx    .input = ip_local_deliver or ip local forward.
    							
-   				for tX	  .output = ip_local_out
+   				for tX	  .output = ip_output
    							
    
    
